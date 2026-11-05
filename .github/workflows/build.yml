@@ -1,0 +1,50 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        shell: cmd
+        run: build.cmd
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item bin\MiniStats.exe, README.md, LICENSE dist\
+          Compress-Archive -Path dist\* -DestinationPath MiniStats-win-x64.zip
+          (Get-FileHash MiniStats-win-x64.zip -Algorithm SHA256).Hash.ToLower() + "  MiniStats-win-x64.zip" | Out-File -Encoding ascii MiniStats-win-x64.zip.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MiniStats-win-x64
+          path: |
+            MiniStats-win-x64.zip
+            MiniStats-win-x64.zip.sha256
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $files = 'MiniStats-win-x64.zip', 'MiniStats-win-x64.zip.sha256'
+          gh release view $env:GITHUB_REF_NAME *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:GITHUB_REF_NAME @files --clobber
+          } else {
+            gh release create $env:GITHUB_REF_NAME @files --title "MiniStats $env:GITHUB_REF_NAME" --generate-notes
+          }
