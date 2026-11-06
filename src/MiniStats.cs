@@ -73,6 +73,8 @@ class Config
     public double Opacity = 0.88;
     public int CornerRadius = 8;
     public int Margin = 10;
+    public string Anchor = "bottom-right";   // top-left | top-right | bottom-left | bottom-right | custom
+    public int Monitor = -1;                 // -1 = primary, otherwise index into Screen.AllScreens
     public int X = int.MinValue, Y = int.MinValue;
     public Color Back = Color.FromArgb(24, 24, 28);
     public Dictionary<string, Color> Colors = new Dictionary<string, Color> {
@@ -84,11 +86,60 @@ class Config
         { "vram",  Color.FromArgb(255, 150, 200) },
         { "temp",  Color.FromArgb(255, 128, 110) } };
 
+    public static readonly string[] Anchors = { "top-left", "top-right", "bottom-left", "bottom-right", "custom" };
+    public static readonly string[] AllItems = { "fps", "cpu", "ram", "ramgb", "gpu", "vram", "gputemp" };
+
+    // ---- colour themes: background, label, fps, cpu, ram, gpu, vram, temp
+    public static readonly string[] ThemeNames = { "Midnight", "Daylight", "Nord", "Mono" };
+    static readonly string[][] ThemeColors = {
+        new[] { "#18181C", "#9696A2", "#FFDE66", "#7CC4FF", "#8BE28B", "#FFB066", "#FF96C8", "#FF806E" },
+        new[] { "#F6F7F9", "#6E7781", "#B7791F", "#1F6FEB", "#1A7F37", "#D9480F", "#BF3989", "#CF222E" },
+        new[] { "#2E3440", "#81A1C1", "#EBCB8B", "#88C0D0", "#A3BE8C", "#D08770", "#B48EAD", "#BF616A" },
+        new[] { "#000000", "#8A8A8A", "#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF", "#FFFFFF" } };
+    public static readonly string[] ColorKeys = { "label", "fps", "cpu", "ram", "gpu", "vram", "temp" };
+
+    public void ApplyTheme(string name)
+    {
+        int i = Array.IndexOf(ThemeNames, name);
+        if (i < 0) return;
+        Back = ColorTranslator.FromHtml(ThemeColors[i][0]);
+        for (int k = 0; k < ColorKeys.Length; k++) Colors[ColorKeys[k]] = ColorTranslator.FromHtml(ThemeColors[i][k + 1]);
+    }
+
+    // name of the theme whose colours match exactly, or null for a custom palette
+    public string DetectTheme()
+    {
+        for (int i = 0; i < ThemeNames.Length; i++)
+        {
+            bool same = Back.ToArgb() == ColorTranslator.FromHtml(ThemeColors[i][0]).ToArgb();
+            for (int k = 0; same && k < ColorKeys.Length; k++)
+                same = ColorOf(ColorKeys[k]).ToArgb() == ColorTranslator.FromHtml(ThemeColors[i][k + 1]).ToArgb();
+            if (same) return ThemeNames[i];
+        }
+        return null;
+    }
+
+    // the display selected by Monitor (falls back to the primary display if it is gone)
+    public Screen TargetScreen()
+    {
+        var all = Screen.AllScreens;
+        return Monitor >= 0 && Monitor < all.Length ? all[Monitor] : Screen.PrimaryScreen;
+    }
+
+    public Config Clone()
+    {
+        var c = (Config)MemberwiseClone();
+        c.Items = new List<string>(Items);
+        c.Colors = new Dictionary<string, Color>(Colors);
+        return c;
+    }
+
     public Config(string path)
     {
         Path = path;
         if (path == null) return;
         if (!File.Exists(path)) { try { Save(); } catch { } return; }
+        bool anchorSeen = false;
         foreach (var raw in File.ReadAllLines(path))
         {
             var line = raw.Trim();
@@ -110,6 +161,8 @@ class Config
                     case "opacity": Opacity = double.Parse(v, CultureInfo.InvariantCulture); break;
                     case "corner_radius": CornerRadius = Math.Max(0, int.Parse(v)); break;
                     case "margin": Margin = int.Parse(v); break;
+                    case "anchor": if (Array.IndexOf(Anchors, v.ToLowerInvariant()) >= 0) { Anchor = v.ToLowerInvariant(); anchorSeen = true; } break;
+                    case "monitor": Monitor = v.Length == 0 || v.ToLowerInvariant() == "primary" ? -1 : Math.Max(-1, int.Parse(v) - 1); break;
                     case "x": if (v.Length > 0) X = int.Parse(v); break;
                     case "y": if (v.Length > 0) Y = int.Parse(v); break;
                     case "background": Back = ColorTranslator.FromHtml(v); break;
@@ -118,12 +171,17 @@ class Config
             }
             catch { }
         }
+        // v1.0 files had no anchor: an explicit x/y meant "where I dragged it"
+        if (!anchorSeen && X != int.MinValue && Y != int.MinValue) Anchor = "custom";
     }
 
-    public void Save()
+    public void Save() { File.WriteAllText(Path, Serialize()); }
+
+    public string Serialize()
     {
         var sb = new StringBuilder();
-        sb.AppendLine("# MiniStats configuration - changes are applied automatically when this file is saved.");
+        sb.AppendLine("# MiniStats configuration - easiest to edit from the tray icon > Settings.");
+        sb.AppendLine("# Manual edits are applied automatically when this file is saved.");
         sb.AppendLine("#");
         sb.AppendLine("# items: comma separated, shown in this order.");
         sb.AppendLine("#   fps, cpu, ram, ramgb, gpu, vram, gputemp");
@@ -138,11 +196,15 @@ class Config
         sb.AppendLine("background=" + Hex(Back));
         foreach (var kv in Colors) sb.AppendLine("color_" + kv.Key + "=" + Hex(kv.Value));
         sb.AppendLine();
-        sb.AppendLine("# position: leave x/y empty to dock to the bottom-right corner of the primary screen");
+        sb.AppendLine("# position");
+        sb.AppendLine("#   anchor : top-left | top-right | bottom-left | bottom-right | custom (uses x/y)");
+        sb.AppendLine("#   monitor: primary, or 1, 2, ... (Windows display order)");
+        sb.AppendLine("anchor=" + Anchor);
+        sb.AppendLine("monitor=" + (Monitor < 0 ? "primary" : (Monitor + 1).ToString()));
         sb.AppendLine("margin=" + Margin);
         sb.AppendLine("x=" + (X == int.MinValue ? "" : X.ToString()));
         sb.AppendLine("y=" + (Y == int.MinValue ? "" : Y.ToString()));
-        File.WriteAllText(Path, sb.ToString());
+        return sb.ToString();
     }
 
     static string Hex(Color c) { return string.Format("#{0:X2}{1:X2}{2:X2}", c.R, c.G, c.B); }
@@ -174,6 +236,12 @@ class Snapshot
     public double Cpu = -1;
     public int RamLoad = -1; public double RamUsedGb, RamTotalGb;
     public int Gpu = -1; public double VramGb = -1; public int GpuTemp = -1;
+
+    // representative values, used for screenshots and as a placeholder before the first sample
+    public static Snapshot Sample()
+    {
+        return new Snapshot { Fps = 144, Cpu = 23, RamLoad = 61, RamUsedGb = 19.6, RamTotalGb = 32, Gpu = 87, VramGb = 6.4, GpuTemp = 64 };
+    }
 
     public List<Part> ToParts(List<string> items)
     {
@@ -777,7 +845,7 @@ static class RenderCli
         }
         var cfg = new Config(cfgPath != null && File.Exists(cfgPath) ? cfgPath : null);
 
-        var s = new Snapshot { Fps = 144, Cpu = 23, RamLoad = 61, RamUsedGb = 19.6, RamTotalGb = 32, Gpu = 87, VramGb = 6.4, GpuTemp = 64 };
+        var s = Snapshot.Sample();
         foreach (var kv in sample.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
         {
             var p = kv.Split('=');
@@ -794,15 +862,23 @@ static class RenderCli
                 case "temp": s.GpuTemp = (int)v; break;
             }
         }
-        var parts = s.ToParts(cfg.Items);
+        using (var bmp = RenderBar(cfg, s.ToParts(cfg.Items), scale))
+            bmp.Save(outPath, ImageFormat.Png);
+        return 0;
+    }
 
+    // Renders the bar to a 32-bit bitmap with rounded corners and the configured opacity.
+    // scale = 1 for 96 dpi, 1.25 for 120 dpi, ...
+    public static Bitmap RenderBar(Config cfg, List<Part> parts, float scale)
+    {
         using (var painter = new Painter(cfg, 96f * scale / 72f))
         {
             var size = painter.Measure(parts);
+            if (size.Width < 1 || size.Height < 1) size = new Size(1, 1);
             // GDI text must be drawn on an opaque 24-bit surface (on 32-bit ARGB it gets dark fringes),
             // then copied to ARGB and given an anti-aliased rounded alpha mask * opacity.
+            var bmp = new Bitmap(size.Width, size.Height, PixelFormat.Format32bppArgb);
             using (var opaque = new Bitmap(size.Width, size.Height, PixelFormat.Format24bppRgb))
-            using (var bmp = new Bitmap(size.Width, size.Height, PixelFormat.Format32bppArgb))
             {
                 using (var g = Graphics.FromImage(opaque))
                 {
@@ -810,11 +886,10 @@ static class RenderCli
                     painter.Draw(g, size, parts, cfg, false);
                 }
                 using (var g = Graphics.FromImage(bmp)) g.DrawImageUnscaled(opaque, 0, 0);
-                ApplyAlphaMask(bmp, (int)Math.Round(cfg.CornerRadius * scale), Math.Max(0.2, Math.Min(1.0, cfg.Opacity)));
-                bmp.Save(outPath, ImageFormat.Png);
             }
+            ApplyAlphaMask(bmp, (int)Math.Round(cfg.CornerRadius * scale), Math.Max(0.2, Math.Min(1.0, cfg.Opacity)));
+            return bmp;
         }
-        return 0;
     }
 
     // GDI text kills the alpha channel, so draw opaque first and then apply an anti-aliased rounded mask * opacity.
@@ -845,7 +920,7 @@ static class RenderCli
         }
     }
 
-    static GraphicsPath RoundRect(RectangleF r, float radius)
+    public static GraphicsPath RoundRect(RectangleF r, float radius)
     {
         var p = new GraphicsPath();
         if (radius <= 0) { p.AddRectangle(r); return p; }
