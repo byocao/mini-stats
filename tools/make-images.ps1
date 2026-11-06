@@ -77,7 +77,7 @@ $bmp, $g = NewCanvas $W $H
 Backdrop $g $W $H
 $null = Text $g 'MiniStats' 'Segoe UI Semibold' 92 'Regular' '#FFFFFF' 72 120
 $null = Text $g 'A tiny FPS / CPU / RAM / GPU overlay for Windows' 'Segoe UI' 34 'Regular' '#C9CCE6' 78 238
-$chips = @('~90 KB single .exe', 'No install, no runtime', '~0.5% CPU', 'Click-through')
+$chips = @('~180 KB single .exe', 'No install, no runtime', '~0.5% CPU', 'Click-through')
 $cx = 80
 foreach ($c in $chips) {
     $f = New-Object System.Drawing.Font 'Segoe UI Semibold', 20, ([System.Drawing.FontStyle]::Regular), ([System.Drawing.GraphicsUnit]::Pixel)
@@ -169,6 +169,46 @@ foreach ($t in $themes) { $imgs += , (Render ('theme' + $i) ($base + "`nitems=fp
 $rows = @(); foreach ($t in $themes) { $rows += , @($t[0], '') }
 Showcase 'Themes' 'themes.png' $rows $imgs
 $imgs | % { $_.Dispose() }
+
+# ---------------------------------------------------------------- 4. settings window
+# MiniStats.exe --shot-settings renders each page of the real settings window (with sample data)
+$shots = Join-Path $tmp 'shots'
+Start-Process -FilePath $exe -ArgumentList @('--shot-settings', $shots) -Wait -NoNewWindow
+
+function Framed($g, $img, [float]$x, [float]$y, [float]$w, [float]$h, [float]$r) {
+    Shadow $g $x $y $w $h $r
+    $brush = New-Object System.Drawing.TextureBrush $img
+    $brush.WrapMode = 'Clamp'
+    $brush.ScaleTransform($w / $img.Width, $h / $img.Height, 'Append')
+    $brush.TranslateTransform($x, $y, 'Append')
+    $g.FillPath($brush, (RoundRect $x $y $w $h $r))
+    $g.DrawPath((New-Object System.Drawing.Pen (C '#FFFFFF' 28), 1), (RoundRect $x $y $w $h $r))
+}
+
+# 4a. one page, large
+$page = [System.Drawing.Image]::FromFile((Join-Path $shots 'settings-1.png'))
+$pw = 1100.0; $ph = $page.Height * $pw / $page.Width
+$W = 1280; $H = [int]($ph + 120)
+$bmp, $g = NewCanvas $W $H
+Backdrop $g $W $H
+Framed $g $page (($W - $pw) / 2) 60 $pw $ph 14
+$g.Dispose(); $bmp.Save((Join-Path $outDir 'settings.png'), [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose(); $page.Dispose()
+
+# 4b. all four pages as a 2 x 2 tour
+$pages = @(); for ($i = 0; $i -lt 4; $i++) { $pages += , [System.Drawing.Image]::FromFile((Join-Path $shots "settings-$i.png")) }
+$cw = 600.0; $gap = 40; $W = [int](2 * $cw + 3 * $gap)
+$rowsH = @(); for ($r = 0; $r -lt 2; $r++) { $rowsH += [math]::Max($pages[2 * $r].Height, $pages[2 * $r + 1].Height) * $cw / $pages[0].Width }
+$H = [int]($rowsH[0] + $rowsH[1] + 3 * $gap)
+$bmp, $g = NewCanvas $W $H
+Backdrop $g $W $H
+for ($i = 0; $i -lt 4; $i++)
+{
+    $col = $i % 2; $row = [math]::Floor($i / 2)
+    $p = $pages[$i]; $h = $p.Height * $cw / $p.Width
+    $x = $gap + $col * ($cw + $gap); $y = $gap + ($(if ($row -eq 0) { 0 } else { $rowsH[0] + $gap }))
+    Framed $g $p $x $y $cw $h 10
+}
+$g.Dispose(); $bmp.Save((Join-Path $outDir 'settings-tour.png'), [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose(); $pages | % { $_.Dispose() }
 
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 Get-ChildItem $outDir | Select-Object Name, Length

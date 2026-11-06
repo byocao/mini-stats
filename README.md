@@ -5,7 +5,7 @@
 # MiniStats
 
 **A tiny, always-on-top FPS / CPU / RAM / GPU overlay for Windows.**
-One ~90 KB executable. No installer, no runtime to download, no background services.
+One small executable. No installer, no runtime to download, no background services.
 
 [![build](https://github.com/byocao/mini-stats/actions/workflows/build.yml/badge.svg)](https://github.com/byocao/mini-stats/actions/workflows/build.yml)
 [![release](https://img.shields.io/github/v/release/byocao/mini-stats?display_name=tag&sort=semver)](https://github.com/byocao/mini-stats/releases/latest)
@@ -34,11 +34,11 @@ of the way.
 - **RAM** usage as a percentage or as `used / total GB`.
 - **GPU** load, **VRAM** and **GPU temperature** via NVIDIA NVML (ships with the driver — nothing to install).
 - **Always on top & click-through**: it never steals focus or blocks a click. Stays visible over borderless/windowed games.
-- **Configurable**: pick and reorder metrics, fonts, colours, opacity, rounded corners, position.
-  Edits to `MiniStats.ini` apply **live**, no restart needed.
-- **Per-monitor DPI aware**: crisp at 100–200 % scaling, on any monitor.
-- **Featherweight**: around 0.5 % CPU on a typical gaming PC, a single ~90 KB `.exe`, built on the .NET Framework
-  that already ships with Windows.
+- **Settings window** with a live preview: metrics and their order, themes, colours, font, opacity, corners,
+  display, corner or free placement, start with Windows. Every change shows on the real bar instantly.
+- **Multi-monitor aware**: dock to any corner of any display, per-monitor DPI aware.
+- **Featherweight**: around 0.5 % CPU on a typical gaming PC and ~15 MB of RAM in use, a single ~180 KB `.exe`
+  built on the .NET Framework that already ships with Windows.
 
 <p align="center"><img src="docs/images/layouts.png" alt="Layouts" width="100%"></p>
 <p align="center"><img src="docs/images/themes.png" alt="Themes" width="100%"></p>
@@ -51,22 +51,40 @@ of the way.
    *(Administrator rights are only needed for the FPS counter — see [FAQ](#faq). Everything else works without.)*
 3. The bar appears in the bottom-right corner of your primary screen. Done.
 
-To have it start automatically, right-click the tray icon → **Start with Windows**. This registers a logon task
-that launches MiniStats elevated, so you will not get a UAC prompt on every boot.
+Open **Settings** by double-clicking the tray icon (or just run `MiniStats.exe` again). Under **General → Start with
+Windows** MiniStats registers a logon task that launches it elevated, so you will not get a UAC prompt on every boot.
+
+## Settings
+
+<p align="center"><img src="docs/images/settings.png" alt="MiniStats settings window" width="100%"></p>
+
+| Page | What you can change |
+| --- | --- |
+| **Metrics** | Turn each metric on or off and move it up or down — the bar follows the list order. Refresh rate. |
+| **Appearance** | One-click themes (Midnight, Daylight, Nord, Mono), any installed font, text size, opacity, corner radius, and every colour through a palette or hex code. |
+| **Position** | Display, a clickable corner map, *Drag to place* for a free position, and the distance from the screen edge. |
+| **General** | FPS counter status with *Restart as administrator*, *Start with Windows*, the settings file, version info. |
+
+Changes preview live on the overlay. **Save** / **Apply** keep them, **Cancel** (or <kbd>Esc</kbd>) puts the bar back
+exactly as it was. <kbd>Ctrl</kbd>+<kbd>S</kbd> saves and closes.
+
+<details>
+<summary><b>All four pages</b></summary>
+<p align="center"><img src="docs/images/settings-tour.png" alt="Metrics, Appearance, Position and General pages" width="100%"></p>
+</details>
 
 ### Tray menu
 
 | Item | What it does |
 | --- | --- |
-| **Unlock to move** / **Lock position** | Makes the bar draggable (yellow outline). Locking saves the position. Double-clicking the tray icon toggles this too. |
-| **Reset position** | Docks the bar back to the bottom-right corner of the primary screen. |
-| **Edit config...** | Opens `MiniStats.ini` in Notepad. Changes apply as soon as you save. |
-| **Start with Windows** | Creates / removes the `MiniStats` logon task (requires running as administrator). |
+| **Settings...** | Opens the settings window (same as double-clicking the tray icon). |
+| **Unlock to move** / **Lock position** | Makes the bar draggable (yellow outline); locking keeps it where you dropped it. |
 | **Exit** | Closes MiniStats and stops its trace session. |
 
-## Configuration
+## Configuration file
 
-`MiniStats.ini` is created next to the executable on first run.
+Everything in the settings window is stored in `MiniStats.ini` next to the executable. You never have to touch it,
+but it is plain text and hand edits are picked up automatically.
 
 ```ini
 # metrics, shown in this order: fps, cpu, ram, ramgb, gpu, vram, gputemp
@@ -87,7 +105,9 @@ color_gpu=#FFB066
 color_vram=#FF96C8
 color_temp=#FF806E
 
-# position: leave x/y empty to dock to the bottom-right corner of the primary screen
+# position
+anchor=bottom-right
+monitor=primary
 margin=10
 x=
 y=
@@ -101,44 +121,10 @@ y=
 | `opacity` | `0.88` | `0.2` – `1.0`. |
 | `corner_radius` | `8` | `0` for square corners. |
 | `background`, `color_*` | see above | Hex colours. `color_label` is used for the `FPS` / `CPU` / … captions. |
-| `margin` | `10` | Distance from the screen edge when docked. |
-| `x`, `y` | *(empty)* | Absolute position in pixels; set automatically when you lock the bar after moving it. |
-
-<details>
-<summary><b>Theme presets</b> (copy into your ini)</summary>
-
-```ini
-# Daylight
-background=#F6F7F9
-color_label=#6E7781
-color_fps=#B7791F
-color_cpu=#1F6FEB
-color_ram=#1A7F37
-color_gpu=#D9480F
-```
-
-```ini
-# Nord
-background=#2E3440
-color_label=#81A1C1
-color_fps=#EBCB8B
-color_cpu=#88C0D0
-color_ram=#A3BE8C
-color_gpu=#D08770
-```
-
-```ini
-# Mono
-background=#000000
-opacity=0.75
-color_label=#8A8A8A
-color_fps=#FFFFFF
-color_cpu=#FFFFFF
-color_ram=#FFFFFF
-color_gpu=#FFFFFF
-```
-
-</details>
+| `anchor` | `bottom-right` | `top-left`, `top-right`, `bottom-left`, `bottom-right`, or `custom` (uses `x`/`y`). |
+| `monitor` | `primary` | `primary` or a display number (`1`, `2`, … in Windows display order). |
+| `margin` | `10` | Distance from the screen edge when docked to a corner. |
+| `x`, `y` | *(empty)* | Absolute position in pixels for `anchor=custom`; filled in when you drag the bar. |
 
 ## How it works
 
@@ -149,12 +135,13 @@ color_gpu=#FFFFFF
 | RAM | `GlobalMemoryStatusEx` | one syscall |
 | GPU / VRAM / temp | `nvml.dll` (`nvmlDeviceGetUtilizationRates`, `GetMemoryInfo`, `GetTemperature`) | three driver calls |
 
-The window is a layered `WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW` popup, so clicks pass straight
-through it and it never appears in Alt+Tab or the taskbar.
+The overlay is a layered `WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW` popup, so clicks pass straight
+through it and it never appears in Alt+Tab or the taskbar. The settings window is WPF (also part of the .NET
+Framework) and is only loaded when you open it; its memory is released back to Windows when you close it.
 
 ## Build from source
 
-Requirements: Windows 10/11 x64. That's it — the C# compiler that comes with the .NET Framework 4.x is enough.
+Requirements: Windows 10/11 x64. That's it — the C# compiler and WPF that come with the .NET Framework 4.x are enough.
 
 ```bat
 git clone https://github.com/byocao/mini-stats.git
@@ -166,26 +153,33 @@ The result is `bin\MiniStats.exe`.
 
 ```text
 mini-stats/
-├─ src/MiniStats.cs        # the whole app (overlay, ETW FPS tracker, NVML, config, renderer)
-├─ src/AssemblyInfo.cs     # version metadata
-├─ assets/icon.ico         # app icon (generated by tools/make-icon.ps1)
-├─ tools/make-images.ps1   # regenerates docs/images with the app's own renderer
-├─ build.cmd               # one-line csc build, no SDK needed
-└─ .github/workflows/      # CI build + release on tags
+├─ src/MiniStats.cs          # overlay, config, ETW FPS tracker, NVML, bar renderer
+├─ src/SettingsWindow.xaml   # settings window layout and styles (embedded resource)
+├─ src/SettingsWindow.cs     # settings window logic
+├─ src/DevTools.cs           # --selftest and --shot-settings
+├─ src/AssemblyInfo.cs       # version metadata
+├─ assets/                   # app + tray icons (generated by tools/make-icon.ps1)
+├─ tools/make-images.ps1     # regenerates docs/images with the app's own renderer
+├─ build.cmd                 # one csc call, no SDK needed
+└─ .github/workflows/        # CI build + release on tags
 ```
 
 ### Developer switches
 
 | Command | Purpose |
 | --- | --- |
+| `MiniStats.exe --settings [page]` | Opens the settings window (page `0`–`3`); talks to the running instance if there is one. |
+| `MiniStats.exe --selftest [report.txt]` | Drives the settings window against a fake host (themes, colours, sliders, ordering, save/cancel/reset, startup) and writes a PASS/FAIL report. Exit code 0 = all passed. |
+| `MiniStats.exe --shot-settings <dir>` | Renders every settings page to PNG. Used for the README images. |
+| `MiniStats.exe --render out.png --config my.ini --scale 2` | Renders the bar offscreen with sample values (`--sample fps=144,cpu=23,...`). |
 | `MiniStats.exe --probe 5` | Records present events for 5 s and writes `probe.txt` with present rates per process. Useful to check which process a game or emulator presents from. Run elevated. |
-| `MiniStats.exe --render out.png --config my.ini --scale 2` | Renders the bar offscreen to a PNG with sample values (`--sample fps=144,cpu=23,...`). Used for the README images. |
 
 ## FAQ
 
 **Why does FPS need administrator rights?**
 Windows only lets administrators (or members of the *Performance Log Users* group) start a real-time ETW trace
-session, which is how present events are observed. Without it MiniStats still runs and shows `FPS n/a`.
+session, which is how present events are observed. Without it MiniStats still runs and shows `FPS n/a` — use
+**Settings → General → Restart as administrator**.
 
 **FPS shows `--`.**
 The foreground window isn't presenting frames (e.g. a static desktop or a minimised game), or the frames come from
@@ -205,9 +199,10 @@ telemetry (ETW, performance counters) and the NVIDIA driver API — the same sou
 
 ## Roadmap
 
+- [x] Settings window with live preview
+- [x] Dock to any corner of any display
 - [ ] AMD / Intel GPU load via `GPU Engine` performance counters
 - [ ] Frame-time graph (1 % low)
-- [ ] Per-monitor docking presets (e.g. "bottom-right of monitor 2")
 - [ ] Optional network up/down speed
 
 ## License
