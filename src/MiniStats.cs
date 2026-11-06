@@ -33,15 +33,60 @@ static class Program
         if (args.Length > 0 && args[0] == "--render") return RenderCli.Run(args);
         if (args.Length > 0 && args[0] == "--probe") { FpsTracker.Probe(args.Length > 1 ? int.Parse(args[1]) : 5); return 0; }
 
+        // "--settings [tab]" opens the settings window (tab 0-3); launching a second copy does the same
+        int settingsTab = -1;
+        int si = Array.IndexOf(args, "--settings");
+        if (si >= 0) { settingsTab = 0; int t; if (si + 1 < args.Length && int.TryParse(args[si + 1], out t)) settingsTab = t; }
+
         bool created;
         using (var mtx = new Mutex(true, "Local\\MiniStatsOverlay", out created))
         {
-            if (!created) return 0;
+            if (!created)
+            {
+                // "--replace": started by an instance that is restarting itself (e.g. elevated); wait for it to exit
+                if (Array.IndexOf(args, "--replace") < 0)
+                {
+                    // already running: ask that instance to show its settings window, then quit.
+                    // Posted straight to its overlay window: a broadcast would not reach an elevated instance (UIPI).
+                    foreach (var h in FindOverlayWindows())
+                        Native.PostMessage(h, ShowSettingsMessage, new IntPtr(Math.Max(0, settingsTab) + 1), IntPtr.Zero);
+                    return 0;
+                }
+                try { if (!mtx.WaitOne(15000)) return 0; }
+                catch (AbandonedMutexException) { }
+            }
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new Overlay());
+            var overlay = new Overlay();
+            if (settingsTab >= 0) overlay.Shown += delegate { overlay.ShowSettings(settingsTab); };
+            Application.Run(overlay);
         }
         return 0;
+    }
+
+    // Registered window message posted by a second launch: wParam = settings tab + 1.
+    public static readonly uint ShowSettingsMessage = Native.RegisterWindowMessage("MiniStats.ShowSettings.v1");
+
+    // top-level "MiniStats" windows that belong to another MiniStats.exe process
+    static List<IntPtr> FindOverlayWindows()
+    {
+        var found = new List<IntPtr>();
+        int self = Process.GetCurrentProcess().Id;
+        var others = new HashSet<int>();
+        foreach (var p in Process.GetProcessesByName("MiniStats")) if (p.Id != self) others.Add(p.Id);
+        Native.EnumWindows(delegate (IntPtr h, IntPtr l)
+        {
+            uint pid;
+            Native.GetWindowThreadProcessId(h, out pid);
+            if (others.Contains((int)pid))
+            {
+                var sb = new StringBuilder(64);
+                Native.GetWindowText(h, sb, sb.Capacity);
+                if (sb.ToString() == "MiniStats") found.Add(h);
+            }
+            return true;
+        }, IntPtr.Zero);
+        return found;
     }
 
     public static bool IsElevated()
@@ -322,22 +367,34 @@ class Painter : IDisposable
 }
 
 // ============================================================================ overlay window
-class Overlay : Form
+class Overlay : Form, ISettingsHost
 {
     Config cfg;
     DateTime cfgStamp;
     System.Windows.Forms.Timer timer;
     NotifyIcon tray;
-    ToolStripMenuItem miMove, miStartup;
+    ToolStripMenuItem miMove;
     Painter painter;
     int painterDpi;
     bool movable;
     Point dragStart;
     List<Part> parts = new List<Part>();
+    SettingsWindow settings;
 
     PerformanceCounter cpuCounter;
     Nvml nvml;
     FpsTracker fps;
+
+    public Snapshot Last { get; private set; }
+    public string FpsError { get { return fps.Error; } }
+    public bool HasGpu { get { return nvml != null; } }
+    public bool IsMovable { get { return movable; } }
+    public bool IsElevated { get { return Program.IsElevated(); } }
+    public bool StartupEnabled { get { return Startup.IsEnabled(); } }
+    public string SetStartup(bool enabled) { return enabled ? Startup.Enable(Application.ExecutablePath) : Startup.Disable(); }
+    public Config CurrentConfig { get { return cfg.Clone(); } }
+    public event EventHandler Sampled;
+    public event EventHandler MoveModeChanged;
 
     public Overlay()
     {
@@ -401,8 +458,26 @@ class Overlay : Form
         Opacity = Math.Max(0.2, Math.Min(1.0, cfg.Opacity));
         if (timer != null) timer.Interval = cfg.IntervalMs;
         if (painter != null) { painter.Dispose(); painter = null; }
-        Reposition();
     }
+
+    // Show a configuration without saving it (live preview from the settings window).
+    public void Preview(Config c)
+    {
+        string path = cfg.Path;
+        cfg = c.Clone();
+        cfg.Path = path;
+        ApplyConfig();
+        Relayout(true);
+    }
+
+    // Show and persist a configuration.
+    public void Commit(Config c)
+    {
+        Preview(c);
+        SaveConfig();
+    }
+
+    public string ConfigPath { get { return cfg.Path; } }
 
     Painter GetPainter()
     {
@@ -422,45 +497,94 @@ class Overlay : Form
     void BuildTray()
     {
         var menu = new ContextMenuStrip();
-        miMove = new ToolStripMenuItem("Unlock to move", null, delegate { ToggleMove(); });
+        var miSettings = new ToolStripMenuItem("Settings...", null, delegate { ShowSettings(); });
+        miSettings.Font = new Font(miSettings.Font, FontStyle.Bold);
+        menu.Items.Add(miSettings);
+        miMove = new ToolStripMenuItem("Unlock to move", null, delegate { SetMovable(!movable, true); });
         menu.Items.Add(miMove);
-        menu.Items.Add("Reset position", null, delegate { cfg.X = cfg.Y = int.MinValue; SaveConfig(); Reposition(); });
-        menu.Items.Add("Edit config...", null, delegate { try { Process.Start("notepad.exe", "\"" + cfg.Path + "\""); } catch { } });
-        menu.Items.Add(new ToolStripSeparator());
-        miStartup = new ToolStripMenuItem("Start with Windows", null, delegate { ToggleStartup(); });
-        menu.Items.Add(miStartup);
-        menu.Items.Add("About MiniStats", null, delegate { try { Process.Start(Program.RepoUrl); } catch { } });
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit", null, delegate { Close(); });
-        menu.Opening += delegate
-        {
-            bool elevated = Program.IsElevated();
-            miStartup.Checked = Startup.IsEnabled();
-            miStartup.Enabled = elevated;
-            miStartup.ToolTipText = elevated ? null : "Run MiniStats as administrator to change this.";
-        };
 
         tray = new NotifyIcon();
         tray.Icon = Program.LoadIcon(SystemInformation.SmallIconSize);
         tray.Text = "MiniStats";
         tray.ContextMenuStrip = menu;
         tray.Visible = true;
-        tray.DoubleClick += delegate { ToggleMove(); };
+        tray.DoubleClick += delegate { ShowSettings(); };
     }
 
-    void ToggleMove()
+    public void ShowSettings() { ShowSettings(-1); }
+
+    public void ShowSettings(int tab)
     {
-        movable = !movable;
+        if (settings == null)
+        {
+            settings = new SettingsWindow(this);
+            settings.Closed += delegate
+            {
+                settings = null;
+                // give back what the settings window used; the overlay itself needs very little
+                BeginInvoke((Action)delegate
+                {
+                    GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect();
+                    try { Native.SetProcessWorkingSetSize(Process.GetCurrentProcess().Handle, new IntPtr(-1), new IntPtr(-1)); } catch { }
+                });
+            };
+            settings.Show();
+        }
+        if (tab >= 0) settings.SelectTab(tab);
+        settings.Activate();
+    }
+
+    // a second launch broadcasts ShowSettingsMessage; allow it through UIPI even when we run elevated
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        try { Native.ChangeWindowMessageFilterEx(Handle, Program.ShowSettingsMessage, 1, IntPtr.Zero); } catch { }
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        if (Program.ShowSettingsMessage != 0 && m.Msg == (int)Program.ShowSettingsMessage)
+        {
+            int tab = (int)m.WParam - 1;
+            BeginInvoke((Action)delegate { ShowSettings(tab); });
+            return;
+        }
+        base.WndProc(ref m);
+    }
+
+    // Unlocked = draggable with a highlighted border. When locking, the spot becomes the "custom" position.
+    // persist=true saves straight to the config file (tray menu); the settings window passes false and saves on OK.
+    public Point SetMovable(bool on, bool persist)
+    {
+        if (movable == on) return Location;
+        movable = on;
         miMove.Text = movable ? "Lock position" : "Unlock to move";
         SetClickThrough(!movable);
-        if (!movable) { cfg.X = Left; cfg.Y = Top; SaveConfig(); }
+        if (!movable)
+        {
+            cfg.Anchor = "custom"; cfg.X = Left; cfg.Y = Top;
+            if (persist) SaveConfig();
+        }
         Invalidate();
+        if (MoveModeChanged != null) MoveModeChanged(this, EventArgs.Empty);
+        return Location;
     }
 
-    void ToggleStartup()
+    // Relaunch elevated (FPS needs it). The new instance waits for this one to exit.
+    public void RestartElevated()
     {
-        string err = Startup.IsEnabled() ? Startup.Disable() : Startup.Enable(Application.ExecutablePath);
-        if (err != null) MessageBox.Show(err, "MiniStats", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        try
+        {
+            var psi = new ProcessStartInfo(Application.ExecutablePath, "--replace");
+            psi.UseShellExecute = true;
+            psi.Verb = "runas";
+            psi.WorkingDirectory = System.IO.Path.GetDirectoryName(Application.ExecutablePath);
+            Process.Start(psi);
+            Close();
+        }
+        catch (System.ComponentModel.Win32Exception) { } // UAC prompt cancelled
     }
 
     void SaveConfig() { try { cfg.Save(); cfgStamp = Stamp(); } catch { } }
@@ -481,7 +605,7 @@ class Overlay : Form
     void Tick()
     {
         var st = Stamp();
-        if (st != cfgStamp) { cfgStamp = st; cfg = new Config(cfg.Path); ApplyConfig(); }
+        if (st != cfgStamp && settings == null) { cfgStamp = st; cfg = new Config(cfg.Path); ApplyConfig(); }
 
         var s = new Snapshot();
         s.Fps = fps.ForegroundFps();
@@ -500,20 +624,27 @@ class Overlay : Form
             var g = nvml.Read();
             s.Gpu = g.Util; s.VramGb = g.MemUsed / 1073741824.0; s.GpuTemp = g.Temp;
         }
-
-        parts = s.ToParts(cfg.Items);
+        Last = s;
         tray.Text = s.FpsUnavailable ? "MiniStats - run as administrator to enable FPS" : "MiniStats";
 
+        Relayout(false);
+        // re-assert topmost: games and launchers sometimes push themselves above other topmost windows
+        Native.SetWindowPos(Handle, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0200);
+        if (Sampled != null) Sampled(this, EventArgs.Empty);
+    }
+
+    void Relayout(bool force)
+    {
+        parts = (Last ?? Snapshot.Sample()).ToParts(cfg.Items);
+        Visible = parts.Count > 0;
         var size = GetPainter().Measure(parts);
-        if (size != Size)
+        if (force || size != Size)
         {
             Size = size;
             UpdateShape();
             Reposition();
         }
         Invalidate();
-        // re-assert topmost: games and launchers sometimes push themselves above other topmost windows
-        Native.SetWindowPos(Handle, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0200);
     }
 
     void UpdateShape()
@@ -528,10 +659,12 @@ class Overlay : Form
     void Reposition()
     {
         if (movable) return;
-        if (cfg.X != int.MinValue && cfg.Y != int.MinValue) { Location = new Point(cfg.X, cfg.Y); return; }
-        var wa = Screen.PrimaryScreen.WorkingArea;
+        if (cfg.Anchor == "custom" && cfg.X != int.MinValue && cfg.Y != int.MinValue) { Location = new Point(cfg.X, cfg.Y); return; }
+        var wa = cfg.TargetScreen().WorkingArea;
         int m = (int)Math.Round(cfg.Margin * (painterDpi > 0 ? painterDpi : 96) / 96.0);
-        Location = new Point(wa.Right - Width - m, wa.Bottom - Height - m);
+        bool left = cfg.Anchor == "top-left" || cfg.Anchor == "bottom-left";
+        bool top = cfg.Anchor == "top-left" || cfg.Anchor == "top-right";
+        Location = new Point(left ? wa.Left + m : wa.Right - Width - m, top ? wa.Top + m : wa.Bottom - Height - m);
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -541,6 +674,7 @@ class Overlay : Form
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
+        if (settings != null) settings.Close();
         timer.Stop();
         fps.Stop();
         if (nvml != null) nvml.Dispose();
@@ -955,6 +1089,13 @@ static class Native
     [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
     [DllImport("gdi32.dll")] public static extern IntPtr CreateRoundRectRgn(int l, int t, int r, int b, int w, int h);
     [DllImport("gdi32.dll")] public static extern bool DeleteObject(IntPtr o);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern uint RegisterWindowMessage(string name);
+    public delegate bool EnumWindowsProc(IntPtr h, IntPtr l);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc f, IntPtr l);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
+    [DllImport("user32.dll")] public static extern bool ChangeWindowMessageFilterEx(IntPtr h, uint msg, uint action, IntPtr info);
+    [DllImport("kernel32.dll")] public static extern bool SetProcessWorkingSetSize(IntPtr process, IntPtr min, IntPtr max);
 
     [StructLayout(LayoutKind.Sequential)]
     public struct MEMORYSTATUSEX
