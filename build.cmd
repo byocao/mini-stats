@@ -17,6 +17,6 @@ if not exist bin mkdir bin
   -resource:assets\tray.ico,MiniStats.tray.ico ^
   -resource:src\SettingsWindow.xaml,MiniStats.SettingsWindow.xaml ^
   -out:bin\MiniStats.exe ^
-  src\MiniStats.cs src\SettingsWindow.cs src\AssemblyInfo.cs
+  src\MiniStats.cs src\SettingsWindow.cs src\DevTools.cs src\AssemblyInfo.cs
 if errorlevel 1 exit /b 1
 echo [build] bin\MiniStats.exe

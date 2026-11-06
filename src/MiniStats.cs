@@ -31,6 +31,8 @@ static class Program
         try { Native.SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch { } // per-monitor v2
 
         if (args.Length > 0 && args[0] == "--render") return RenderCli.Run(args);
+        if (args.Length > 0 && args[0] == "--shot-settings") return SettingsWindow.Shots(args.Length > 1 ? args[1] : ".", args.Length > 2 ? double.Parse(args[2], CultureInfo.InvariantCulture) : 0);
+        if (args.Length > 0 && args[0] == "--selftest") return SettingsWindow.SelfTest(args.Length > 1 ? args[1] : Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "selftest.txt"));
         if (args.Length > 0 && args[0] == "--probe") { FpsTracker.Probe(args.Length > 1 ? int.Parse(args[1]) : 5); return 0; }
 
         // "--settings [tab]" opens the settings window (tab 0-3); launching a second copy does the same
