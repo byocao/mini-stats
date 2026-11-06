@@ -373,7 +373,6 @@ class Overlay : Form, ISettingsHost
 {
     Config cfg;
     DateTime cfgStamp;
-    System.Windows.Forms.Timer timer;
     NotifyIcon tray;
     ToolStripMenuItem miMove;
     Painter painter;
@@ -387,7 +386,16 @@ class Overlay : Form, ISettingsHost
     Nvml nvml;
     FpsTracker fps;
 
-    public Snapshot Last { get; private set; }
+    // Sampling runs on its own thread so a slow driver / counter / other process can never freeze the UI thread
+    // (Windows kills windows that stop answering messages). The UI thread only lays out and paints.
+    Thread sampler;
+    readonly ManualResetEvent stopSampler = new ManualResetEvent(false);
+    volatile bool stopping;
+    volatile int intervalMs = 1000;
+    volatile Snapshot last;
+    int uiPending; // 1 while a UI update is queued, so updates never pile up behind a busy UI thread
+
+    public Snapshot Last { get { return last; } }
     public string FpsError { get { return fps.Error; } }
     public bool HasGpu { get { return nvml != null; } }
     public bool IsMovable { get { return movable; } }
@@ -424,12 +432,7 @@ class Overlay : Form, ISettingsHost
 
         BuildTray();
         ApplyConfig();
-
-        timer = new System.Windows.Forms.Timer();
-        timer.Interval = cfg.IntervalMs;
-        timer.Tick += delegate { Tick(); };
-        timer.Start();
-        Tick();
+        Relayout(true); // placeholder values until the first sample arrives
     }
 
     // ---- window styles: tool window, never activates, layered, click-through, topmost
@@ -458,7 +461,7 @@ class Overlay : Form, ISettingsHost
     {
         BackColor = cfg.Back;
         Opacity = Math.Max(0.2, Math.Min(1.0, cfg.Opacity));
-        if (timer != null) timer.Interval = cfg.IntervalMs;
+        intervalMs = cfg.IntervalMs;
         if (painter != null) { painter.Dispose(); painter = null; }
     }
 
@@ -543,6 +546,7 @@ class Overlay : Form, ISettingsHost
     {
         base.OnHandleCreated(e);
         try { Native.ChangeWindowMessageFilterEx(Handle, Program.ShowSettingsMessage, 1, IntPtr.Zero); } catch { }
+        StartSampler(); // needs the handle for BeginInvoke
     }
 
     protected override void WndProc(ref Message m)
@@ -603,12 +607,30 @@ class Overlay : Form, ISettingsHost
         base.OnMouseMove(e);
     }
 
-    // ---- sampling
-    void Tick()
+    // ---- sampling (background thread)
+    void StartSampler()
     {
-        var st = Stamp();
-        if (st != cfgStamp && settings == null) { cfgStamp = st; cfg = new Config(cfg.Path); ApplyConfig(); }
+        if (sampler != null) return;
+        sampler = new Thread(SamplerLoop) { IsBackground = true, Name = "Sampler" };
+        sampler.Start();
+    }
 
+    void SamplerLoop()
+    {
+        while (!stopping)
+        {
+            try { last = TakeSample(); } catch { }
+            if (Interlocked.CompareExchange(ref uiPending, 1, 0) == 0)
+            {
+                try { BeginInvoke((Action)OnSampledUi); }
+                catch { uiPending = 0; } // handle gone: we are shutting down
+            }
+            stopSampler.WaitOne(intervalMs);
+        }
+    }
+
+    Snapshot TakeSample()
+    {
         var s = new Snapshot();
         s.Fps = fps.ForegroundFps();
         s.FpsUnavailable = fps.Error != null;
@@ -626,12 +648,26 @@ class Overlay : Form, ISettingsHost
             var g = nvml.Read();
             s.Gpu = g.Util; s.VramGb = g.MemUsed / 1073741824.0; s.GpuTemp = g.Temp;
         }
-        Last = s;
-        tray.Text = s.FpsUnavailable ? "MiniStats - run as administrator to enable FPS" : "MiniStats";
+        return s;
+    }
+
+    // ---- UI update for a new sample (UI thread; must stay cheap and never block)
+    void OnSampledUi()
+    {
+        uiPending = 0;
+        if (stopping || IsDisposed) return;
+
+        var st = Stamp();
+        if (st != cfgStamp && settings == null) { cfgStamp = st; cfg = new Config(cfg.Path); ApplyConfig(); }
+
+        var s = last;
+        string tip = s != null && s.FpsUnavailable ? "MiniStats - run as administrator to enable FPS" : "MiniStats";
+        if (tray.Text != tip) tray.Text = tip; // only talk to Explorer when something changed
 
         Relayout(false);
-        // re-assert topmost: games and launchers sometimes push themselves above other topmost windows
-        Native.SetWindowPos(Handle, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0200);
+        // re-assert topmost (games and launchers sometimes push themselves above other topmost windows);
+        // SWP_ASYNCWINDOWPOS so this call never waits on anybody
+        Native.SetWindowPos(Handle, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0200 | 0x4000);
         if (Sampled != null) Sampled(this, EventArgs.Empty);
     }
 
@@ -677,9 +713,11 @@ class Overlay : Form, ISettingsHost
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         if (settings != null) settings.Close();
-        timer.Stop();
+        stopping = true;
+        stopSampler.Set();
+        bool samplerDone = sampler == null || sampler.Join(2000);
         fps.Stop();
-        if (nvml != null) nvml.Dispose();
+        if (nvml != null && samplerDone) nvml.Dispose(); // never pull NVML out from under a stuck sampler
         tray.Visible = false;
         tray.Dispose();
         base.OnFormClosing(e);
@@ -704,6 +742,7 @@ static class Startup
             "  <Principals><Principal id=\"Author\"><UserId>" + SecurityElement.Escape(user) + "</UserId><LogonType>InteractiveToken</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals>\r\n" +
             "  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>" +
             "<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><Priority>7</Priority></Settings>\r\n" +
+
             "  <Actions Context=\"Author\"><Exec><Command>" + SecurityElement.Escape(exePath) + "</Command><WorkingDirectory>" +
             SecurityElement.Escape(Path.GetDirectoryName(exePath)) + "</WorkingDirectory></Exec></Actions>\r\n" +
             "</Task>\r\n";
