@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.1.1 - 2026-11-06
+
+### Fixed
+- The overlay could be closed by Windows as "not responding" when a metric source (GPU driver, performance
+  counter, another process) answered slowly. Sampling now runs on a background thread and the UI thread never
+  waits on anything.
+
+### Changed
+- *Start with Windows* restarts MiniStats automatically if it ever exits unexpectedly (turn the switch off and on
+  once to update an existing task).
+
 ## v1.1.0 - 2026-11-06
 
 ### Added
