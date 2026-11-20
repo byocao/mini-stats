@@ -56,8 +56,16 @@ static class Program
                 {
                     // already running: ask that instance to show its settings window, then quit.
                     // Posted straight to its overlay window: a broadcast would not reach an elevated instance (UIPI).
-                    foreach (var h in FindOverlayWindows())
-                        Native.PostMessage(h, ShowSettingsMessage, new IntPtr(Math.Max(0, settingsTab) + 1), IntPtr.Zero);
+                    // The other copy may itself still be starting (e.g. right after an update, while Defender scans
+                    // the new exe), so keep trying for a while instead of giving up when its window isn't there yet.
+                    var wParam = new IntPtr(Math.Max(0, settingsTab) + 1);
+                    for (var until = DateTime.UtcNow.AddSeconds(15); DateTime.UtcNow < until; Thread.Sleep(250))
+                    {
+                        bool delivered = false;
+                        foreach (var h in FindOverlayWindows())
+                            delivered |= Native.PostMessage(h, ShowSettingsMessage, wParam, IntPtr.Zero);
+                        if (delivered) break;
+                    }
                     return 0;
                 }
                 try { if (!mtx.WaitOne(15000)) return 0; }
