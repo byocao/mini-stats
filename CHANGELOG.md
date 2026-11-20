@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.3.0 - 2026-11-20
+
+### Added
+- **In-app updates.** MiniStats checks GitHub Releases shortly after start and twice a day. A newer version shows a
+  tray notification, an *Update available* banner in the settings sidebar and an **Updates** card under General with
+  the release notes. *Update now* downloads the release, verifies it against the published SHA-256 checksum and
+  GitHub's asset digest, checks the unpacked exe, swaps it in and restarts — keeping elevation, settings and pending
+  changes. Any failure keeps the current version.
+- *Check for updates automatically* switch (`check_updates`), *Check now* button and a tray menu entry.
+- `--update-dry-run` developer switch: exercises the real update path without installing.
+
 ## v1.2.0 - 2026-11-20
 
 ### Added
