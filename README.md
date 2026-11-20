@@ -34,6 +34,7 @@ of the way.
 - **RAM** usage as a percentage or as `used / total GB`.
 - **GPU** load, **VRAM** and **GPU temperature** via NVIDIA NVML (ships with the driver — nothing to install).
 - **Always on top & click-through**: it never steals focus or blocks a click. Stays visible over borderless/windowed games.
+- **Horizontal or vertical**: one compact row, or one metric per line like a classic in-game OSD.
 - **Settings window** with a live preview: metrics and their order, themes, colours, font, opacity, corners,
   display, corner or free placement, start with Windows. Every change shows on the real bar instantly.
 - **Multi-monitor aware**: dock to any corner of any display, per-monitor DPI aware.
@@ -61,7 +62,7 @@ Windows** MiniStats registers a logon task that launches it elevated, so you wil
 | Page | What you can change |
 | --- | --- |
 | **Metrics** | Turn each metric on or off and move it up or down — the bar follows the list order. Refresh rate. |
-| **Appearance** | One-click themes (Midnight, Daylight, Nord, Mono), any installed font, text size, opacity, corner radius, and every colour through a palette or hex code. |
+| **Appearance** | Horizontal or vertical layout, one-click themes (Midnight, Daylight, Nord, Mono), any installed font, text size, opacity, corner radius, and every colour through a palette or hex code. |
 | **Position** | Display, a clickable corner map, *Drag to place* for a free position, and the distance from the screen edge. |
 | **General** | FPS counter status with *Restart as administrator*, *Start with Windows*, the settings file, version info. |
 
@@ -96,6 +97,7 @@ font=Segoe UI
 font_size=10
 opacity=0.88
 corner_radius=8
+layout=horizontal
 background=#18181C
 color_label=#9696A2
 color_fps=#FFDE66
@@ -120,11 +122,12 @@ y=
 | `font`, `font_size` | `Segoe UI`, `10` | Any installed font; size in points. |
 | `opacity` | `0.88` | `0.2` – `1.0`. |
 | `corner_radius` | `8` | `0` for square corners. |
+| `layout` | `horizontal` | `horizontal` (one row) or `vertical` (one metric per line, values right-aligned). |
 | `background`, `color_*` | see above | Hex colours. `color_label` is used for the `FPS` / `CPU` / … captions. |
 | `anchor` | `bottom-right` | `top-left`, `top-right`, `bottom-left`, `bottom-right`, or `custom` (uses `x`/`y`). |
 | `monitor` | `primary` | `primary` or a display number (`1`, `2`, … in Windows display order). |
 | `margin` | `10` | Distance from the screen edge when docked to a corner. |
-| `x`, `y` | *(empty)* | Absolute position in pixels for `anchor=custom`; filled in when you drag the bar. |
+| `x`, `y` | *(empty)* | Absolute position in pixels for `anchor=custom`; filled in when you drag the bar. The bar is always kept fully on screen (e.g. a tall vertical bar dragged near the bottom edge). |
 
 ## How it works
 

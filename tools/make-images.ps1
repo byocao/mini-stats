@@ -105,18 +105,23 @@ $layouts = @(
     @('Default', 'items=fps,cpu,ram,gpu', 'fps=144,cpu=23,ram=61,gpu=87'),
     @('Everything', 'items=fps,cpu,ram,gpu,vram,gputemp', 'fps=165,cpu=31,ram=58,gpu=94,vram=7.2,temp=68'),
     @('Memory in GB', 'items=fps,cpu,ramgb,gpu', 'fps=60,cpu=12,ram=61,ramused=19.6,gpu=41'),
-    @('Just FPS', 'items=fps', 'fps=240')
+    @('Just FPS', 'items=fps', 'fps=240'),
+    @('Vertical', "layout=vertical`nitems=fps,cpu,ram,gpu,vram,gputemp", 'fps=144,cpu=23,ram=61,gpu=87,vram=6.4,temp=64')
 )
 $imgs = @(); foreach ($l in $layouts) { $imgs += , (Render ('layout-' + $l[0].Replace(' ', '')) ($base + "`n" + $l[1]) $l[2]) }
 function Showcase([string]$title, [string]$file, $rows, $images) {
-    $colX = 460; $rowH = 112
+    $colX = 460
+    # each row is as tall as its image (a vertical bar is much taller than one row)
+    $rowHs = @(); foreach ($im in $images) { $rowHs += [math]::Max(112, $im.Height + 40) }
     $maxW = ($images | Measure-Object -Property Width -Maximum).Maximum
-    $W = [math]::Max(1280, $colX + $maxW + 60); $H = 84 + $rowH * $rows.Count
+    $W = [math]::Max(1280, $colX + $maxW + 60); $H = 84 + ($rowHs | Measure-Object -Sum).Sum
     $bmp, $g = NewCanvas $W $H
     Backdrop $g $W $H
     $null = Text $g $title 'Segoe UI Semibold' 30 'Regular' '#FFFFFF' 56 22
+    $y = 80
     for ($i = 0; $i -lt $rows.Count; $i++) {
-        $y = 80 + $i * $rowH; $img = $images[$i]
+        if ($i -gt 0) { $y += $rowHs[$i - 1] }
+        $img = $images[$i]
         $null = Text $g $rows[$i][0] 'Segoe UI Semibold' 22 'Regular' '#E9EAF6' 60 ($y + 8)
         if ($rows[$i][1]) { $null = Text $g $rows[$i][1] 'Consolas' 17 'Regular' '#9EA3C8' 60 ($y + 42) }
         $iy = $y + 10
