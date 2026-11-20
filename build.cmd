@@ -13,10 +13,11 @@ if not exist bin mkdir bin
 "%CSC%" -nologo -codepage:65001 -target:winexe -optimize+ -platform:x64 ^
   -lib:"%FW%\WPF" ^
   -r:PresentationFramework.dll -r:PresentationCore.dll -r:WindowsBase.dll -r:System.Xaml.dll -r:WindowsFormsIntegration.dll ^
+  -r:System.Web.Extensions.dll -r:System.IO.Compression.dll -r:System.IO.Compression.FileSystem.dll ^
   -win32icon:assets\icon.ico ^
   -resource:assets\tray.ico,MiniStats.tray.ico ^
   -resource:src\SettingsWindow.xaml,MiniStats.SettingsWindow.xaml ^
   -out:bin\MiniStats.exe ^
-  src\MiniStats.cs src\SettingsWindow.cs src\DevTools.cs src\AssemblyInfo.cs
+  src\MiniStats.cs src\Updater.cs src\SettingsWindow.cs src\DevTools.cs src\AssemblyInfo.cs
 if errorlevel 1 exit /b 1
 echo [build] bin\MiniStats.exe
