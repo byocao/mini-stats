@@ -36,6 +36,8 @@ interface ISettingsHost
     System.Drawing.Point SetMovable(bool on, bool persist);
     string SetStartup(bool enabled);
     void RestartElevated();
+    Updater Updater { get; }
+    void StartUpdate();
 }
 
 partial class SettingsWindow
@@ -73,7 +75,7 @@ partial class SettingsWindow
         new[] { "Metrics", "Choose what the bar shows, and in which order." },
         new[] { "Appearance", "Theme, colours, text and shape of the bar." },
         new[] { "Position", "Where the bar sits on your screens." },
-        new[] { "General", "FPS counter, startup and app info." } };
+        new[] { "General", "Updates, FPS counter, startup and app info." } };
 
     // ------------------------------------------------------------------ named elements
     RadioButton[] nav = new RadioButton[4];
@@ -90,6 +92,12 @@ partial class SettingsWindow
     TextBox HexBox;
     RadioButton CornerTL, CornerTR, CornerBL, CornerBR, LayoutH, LayoutV;
     Border PreviewCard;
+    // updates
+    Border UpdatePill, UpdBadge, UpdNotesBox;
+    TextBlock UpdatePillTitle, UpdatePillText, UpdatePillBtnText, UpdBadgeText, UpdStatus, UpdInstallText, UpdNotesTitle, UpdNotes;
+    ProgressBar UpdatePillProgress, UpdProgress;
+    Button UpdatePillBtn, UpdCheckBtn, UpdInstallBtn, UpdNotesBtn;
+    CheckBox AutoUpdateSwitch;
     Border CustomBadge, ScreenMock, FpsPill, FpsBadge;
     Ellipse FpsDot;
     CheckBox StartupSwitch;
@@ -127,6 +135,12 @@ partial class SettingsWindow
         MonitorCombo = E<ComboBox>("MonitorCombo"); ScreenMock = E<Border>("ScreenMock"); CustomBadge = E<Border>("CustomBadge");
         CornerTL = E<RadioButton>("CornerTL"); CornerTR = E<RadioButton>("CornerTR"); CornerBL = E<RadioButton>("CornerBL"); CornerBR = E<RadioButton>("CornerBR");
         LayoutH = E<RadioButton>("LayoutH"); LayoutV = E<RadioButton>("LayoutV"); PreviewCard = E<Border>("PreviewCard");
+        UpdatePill = E<Border>("UpdatePill"); UpdatePillTitle = E<TextBlock>("UpdatePillTitle"); UpdatePillText = E<TextBlock>("UpdatePillText");
+        UpdatePillProgress = E<ProgressBar>("UpdatePillProgress"); UpdatePillBtn = E<Button>("UpdatePillBtn"); UpdatePillBtnText = E<TextBlock>("UpdatePillBtnText");
+        UpdBadge = E<Border>("UpdBadge"); UpdBadgeText = E<TextBlock>("UpdBadgeText"); UpdStatus = E<TextBlock>("UpdStatus");
+        UpdCheckBtn = E<Button>("UpdCheckBtn"); UpdInstallBtn = E<Button>("UpdInstallBtn"); UpdInstallText = E<TextBlock>("UpdInstallText");
+        UpdProgress = E<ProgressBar>("UpdProgress"); UpdNotesBox = E<Border>("UpdNotesBox"); UpdNotesTitle = E<TextBlock>("UpdNotesTitle");
+        UpdNotes = E<TextBlock>("UpdNotes"); UpdNotesBtn = E<Button>("UpdNotesBtn"); AutoUpdateSwitch = E<CheckBox>("AutoUpdateSwitch");
         DragBtn = E<Button>("DragBtn"); DragText = E<TextBlock>("DragText");
         MarginSlider = E<Slider>("MarginSlider"); MarginText = E<TextBlock>("MarginText");
         FpsBadge = E<Border>("FpsBadge"); FpsBadgeText = E<TextBlock>("FpsBadgeText"); FpsHint = E<TextBlock>("FpsHint"); ElevateBtn = E<Button>("ElevateBtn");
@@ -143,6 +157,13 @@ partial class SettingsWindow
 
         host.Sampled += OnSampled;
         host.MoveModeChanged += OnMoveModeChanged;
+        if (host.Updater != null)
+        {
+            host.Updater.Changed += OnUpdaterChanged;
+            // opening Settings is a good moment to look, unless it was checked recently
+            if (host.Updater.State == UpdateState.Idle && work.CheckUpdates) host.Updater.CheckAsync();
+        }
+        RefreshUpdateUi();
         Win.SourceInitialized += delegate { StyleNativeWindow(); };
         Win.Closing += delegate { OnClosing(); };
         Win.Closed += delegate { if (Closed != null) Closed(this, EventArgs.Empty); };
@@ -262,6 +283,17 @@ partial class SettingsWindow
         ShowFolderBtn.Click += delegate { Run("explorer.exe", "/select,\"" + host.ConfigPath + "\""); };
         GithubBtn.Click += delegate { Run(Program.RepoUrl, null); };
 
+        UpdCheckBtn.Click += delegate { if (host.Updater != null) host.Updater.CheckAsync(); };
+        UpdInstallBtn.Click += delegate { BeginUpdate(); };
+        UpdatePillBtn.Click += delegate { BeginUpdate(); };
+        UpdNotesBtn.Click += delegate
+        {
+            var info = host.Updater != null ? host.Updater.Latest : null;
+            Run(info != null && info.PageUrl != null ? info.PageUrl : Program.RepoUrl + "/releases", null);
+        };
+        AutoUpdateSwitch.Checked += delegate { OnChanged(); };
+        AutoUpdateSwitch.Unchecked += delegate { OnChanged(); };
+
         ResetBtn.Click += delegate { work = new Config(null); LoadControls(); OnChanged(); };
         CancelBtn.Click += delegate { Win.Close(); };
         ApplyBtn.Click += delegate { host.Commit(work); original = work.Clone(); UpdateDirty(); };
@@ -321,6 +353,7 @@ partial class SettingsWindow
             ? "Launch MiniStats when you sign in, with administrator rights (so FPS works) and no UAC prompt."
             : "Needs administrator rights to change - use \"Restart as administrator\" under FPS counter first.";
         UpdateFpsStatus();
+        AutoUpdateSwitch.IsChecked = work.CheckUpdates;
 
         loading = false;
         // the slider labels are filled by their ValueChanged handlers; make sure they show even if the value didn't change
@@ -345,6 +378,7 @@ partial class SettingsWindow
         work.Opacity = Math.Round(OpacitySlider.Value) / 100.0;
         work.CornerRadius = (int)Math.Round(RadiusSlider.Value);
         work.Layout = LayoutV.IsChecked == true ? "vertical" : "horizontal";
+        work.CheckUpdates = AutoUpdateSwitch.IsChecked == true;
         work.Monitor = MonitorCombo.SelectedIndex - 1;
         string corner = CheckedCorner();
         work.Anchor = corner ?? "custom";
@@ -550,6 +584,141 @@ partial class SettingsWindow
         });
     }
 
+    // ------------------------------------------------------------------ updates
+    void OnUpdaterChanged(object sender, EventArgs e)
+    {
+        // the updater may report from a worker thread; WPF elements must only be touched on their own thread
+        if (!Win.Dispatcher.CheckAccess()) { Win.Dispatcher.BeginInvoke((Action)RefreshUpdateUi); return; }
+        RefreshUpdateUi();
+    }
+
+    void BeginUpdate()
+    {
+        if (host.Updater == null || host.Updater.IsBusy) return;
+        // the app restarts into the new version: keep what was changed here
+        if (Dirty()) { host.Commit(work); original = work.Clone(); UpdateDirty(); }
+        host.StartUpdate();
+    }
+
+    static string Ago(DateTime t)
+    {
+        if (t == DateTime.MinValue) return "never";
+        var d = DateTime.Now - t;
+        if (d.TotalMinutes < 1) return "just now";
+        if (d.TotalMinutes < 60) return (int)d.TotalMinutes + " min ago";
+        if (d.TotalHours < 24) return (int)d.TotalHours + " h ago";
+        return t.ToString("d MMM yyyy", CultureInfo.InvariantCulture);
+    }
+
+    void Badge(string text, DColor fg, DColor bg)
+    {
+        UpdBadgeText.Text = text;
+        UpdBadgeText.Foreground = Brush(fg);
+        UpdBadge.Background = Brush(bg);
+    }
+
+    void RefreshUpdateUi()
+    {
+        var up = host.Updater;
+        if (up == null) { UpdatePill.Visibility = Visibility.Collapsed; return; }
+        var s = up.State;
+        var info = up.Latest;
+        string cur = "v" + up.Current;
+        bool newer = info != null && info.Version > up.Current;
+        string next = newer ? "v" + info.Version : "";
+        bool working = s == UpdateState.Downloading || s == UpdateState.Verifying || s == UpdateState.Installing;
+        var accent = DColor.FromArgb(124, 140, 255); var accentBg = DColor.FromArgb(40, 46, 104);
+        var green = DColor.FromArgb(61, 220, 132); var greenBg = DColor.FromArgb(28, 58, 42);
+        var amber = DColor.FromArgb(255, 190, 80); var amberBg = DColor.FromArgb(58, 44, 20);
+        var sub = DColor.FromArgb(154, 154, 178); var subBg = DColor.FromArgb(38, 38, 52);
+
+        // ---- General > Updates card
+        switch (s)
+        {
+            case UpdateState.Checking:
+                Badge("Checking", sub, subBg);
+                UpdStatus.Text = "Looking for a newer version on GitHub...";
+                break;
+            case UpdateState.UpToDate:
+                Badge("Up to date", green, greenBg);
+                UpdStatus.Text = "You have the latest version, " + cur + ". Checked " + Ago(up.LastChecked) + ".";
+                break;
+            case UpdateState.Available:
+                Badge("New version", accent, accentBg);
+                UpdStatus.Text = next + " is available" + (info.Published != DateTime.MinValue ? " (released " + info.Published.ToString("d MMM yyyy", CultureInfo.InvariantCulture) + ")" : "") + ". You have " + cur + ".";
+                break;
+            case UpdateState.Downloading:
+                Badge("Updating", accent, accentBg);
+                UpdStatus.Text = "Downloading " + next + "...  " + up.Progress + " %";
+                break;
+            case UpdateState.Verifying:
+                Badge("Updating", accent, accentBg);
+                UpdStatus.Text = "Verifying the download against its published SHA-256 checksum...";
+                break;
+            case UpdateState.Installing:
+                Badge("Updating", accent, accentBg);
+                UpdStatus.Text = "Installing " + next + " - MiniStats restarts in a moment.";
+                break;
+            case UpdateState.Error:
+                Badge("Problem", amber, amberBg);
+                UpdStatus.Text = up.Error + (up.LastChecked != DateTime.MinValue ? "  (last check " + Ago(up.LastChecked) + ")" : "");
+                break;
+            default:
+                Badge(cur, sub, subBg);
+                UpdStatus.Text = "You have " + cur + ". Not checked yet.";
+                break;
+        }
+        UpdCheckBtn.IsEnabled = !up.IsBusy;
+        UpdInstallBtn.Visibility = newer && (s == UpdateState.Available || s == UpdateState.Error || working) ? Visibility.Visible : Visibility.Collapsed;
+        UpdInstallBtn.IsEnabled = !working;
+        UpdInstallText.Text = s == UpdateState.Error ? "Try again" : working ? "Updating..." : "Update to " + next;
+        UpdProgress.Visibility = working ? Visibility.Visible : Visibility.Collapsed;
+        UpdProgress.Value = s == UpdateState.Downloading ? up.Progress : 100;
+        UpdNotesBox.Visibility = newer ? Visibility.Visible : Visibility.Collapsed;
+        if (newer)
+        {
+            UpdNotesTitle.Text = "What's new in " + next;
+            var notes = Updater.PlainNotes(info.Notes, 8);
+            UpdNotes.Text = notes.Length > 0 ? notes : "See the full release notes on GitHub.";
+        }
+
+        // ---- sidebar banner (above "FPS counter active")
+        bool pill = newer && (s == UpdateState.Available || working || s == UpdateState.Error);
+        UpdatePill.Visibility = pill ? Visibility.Visible : Visibility.Collapsed;
+        if (!pill) return;
+        UpdatePillProgress.Visibility = working ? Visibility.Visible : Visibility.Collapsed;
+        UpdatePillProgress.Value = s == UpdateState.Downloading ? up.Progress : 100;
+        UpdatePillBtn.IsEnabled = !working;
+        switch (s)
+        {
+            case UpdateState.Downloading:
+                UpdatePillTitle.Text = "Downloading update";
+                UpdatePillText.Text = next + "  ·  " + up.Progress + " %";
+                UpdatePillBtnText.Text = "Updating...";
+                break;
+            case UpdateState.Verifying:
+                UpdatePillTitle.Text = "Verifying";
+                UpdatePillText.Text = "Checking the SHA-256 checksum...";
+                UpdatePillBtnText.Text = "Updating...";
+                break;
+            case UpdateState.Installing:
+                UpdatePillTitle.Text = "Installing " + next;
+                UpdatePillText.Text = "MiniStats restarts in a moment.";
+                UpdatePillBtnText.Text = "Updating...";
+                break;
+            case UpdateState.Error:
+                UpdatePillTitle.Text = "Update failed";
+                UpdatePillText.Text = up.Error;
+                UpdatePillBtnText.Text = "Try again";
+                break;
+            default:
+                UpdatePillTitle.Text = "Update available";
+                UpdatePillText.Text = next + " is ready to install. You have " + cur + ".";
+                UpdatePillBtnText.Text = "Update now";
+                break;
+        }
+    }
+
     // ------------------------------------------------------------------ general page
     void UpdateFpsStatus()
     {
@@ -610,6 +779,7 @@ partial class SettingsWindow
     {
         host.Sampled -= OnSampled;
         host.MoveModeChanged -= OnMoveModeChanged;
+        if (host.Updater != null) host.Updater.Changed -= OnUpdaterChanged;
         if (host.IsMovable) host.SetMovable(false, false);
         if (!committed) host.Preview(original); // Cancel / close: back to the saved look
     }

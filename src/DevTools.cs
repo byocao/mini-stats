@@ -34,6 +34,29 @@ class FakeHost : ISettingsHost
     public System.Drawing.Point SetMovable(bool on, bool persist) { return System.Drawing.Point.Empty; }
     public string SetStartup(bool enabled) { StartupCalls++; Startup = enabled; return null; }
     public void RestartElevated() { }
+
+    // the updater never touches the network here: GetText is stubbed and states are simulated
+    public Updater Updater { get; private set; }
+    public int UpdateStarts;
+    public void StartUpdate() { UpdateStarts++; }
+
+    public FakeHost()
+    {
+        Updater = new Updater(new Version(1, 2, 0));
+        Updater.GetText = delegate (string url, string accept) { throw new System.Net.WebException("offline (self-test)"); };
+        Updater.Simulate(UpdateState.UpToDate, SampleRelease(new Version(1, 2, 0)), 0);
+    }
+
+    public static UpdateInfo SampleRelease(Version v)
+    {
+        return new UpdateInfo
+        {
+            Version = v, Tag = "v" + v, Title = "MiniStats v" + v,
+            PageUrl = Program.RepoUrl + "/releases/tag/v" + v,
+            Published = new DateTime(2026, 12, 2),
+            Notes = "## What's Changed\n* Vertical layout picker in **Settings**\n* Update MiniStats from the app: check, download, verify and restart in one click\n* Faster start-up\n\n**Full Changelog**: https://github.com/byocao/mini-stats/compare/v1.2.0...v" + v
+        };
+    }
 }
 
 partial class SettingsWindow
@@ -62,7 +85,10 @@ partial class SettingsWindow
     public static int Shots(string dir, double scale)
     {
         Directory.CreateDirectory(dir);
-        var w = Offscreen(new FakeHost());
+        var demo = new FakeHost();
+        // show the update experience in the screenshots: a newer release is waiting
+        demo.Updater.Simulate(UpdateState.Available, FakeHost.SampleRelease(new Version(1, 3, 0)), 0);
+        var w = Offscreen(demo);
         if (scale <= 0) scale = w.DpiScale(); // same scale the live preview was rendered at -> pixel-exact
         var root = (FrameworkElement)w.Win.Content;
         var scroller = FindAll<ScrollViewer>(root)[0];
@@ -199,12 +225,107 @@ partial class SettingsWindow
             check("not elevated: startup switch is disabled", !h.StartupSwitch.IsEnabled);
             check("not elevated: FPS badge says Off", h.FpsBadgeText.Text == "Off");
             h.Win.Close();
+
+            UpdaterTests(check);
+            UpdateUiTests(check);
         }
         catch (Exception ex) { failed++; log.AppendLine("ERROR " + ex); }
 
         log.AppendLine(failed == 0 ? "ALL PASSED" : failed + " FAILED");
         File.WriteAllText(reportPath, log.ToString());
         return failed == 0 ? 0 : 1;
+    }
+
+    // ---------------------------------------------------------------- updater (no network)
+    const string SampleReleaseJson = @"{
+      ""tag_name"": ""v1.3.0"", ""name"": ""MiniStats v1.3.0"",
+      ""html_url"": ""https://github.com/byocao/mini-stats/releases/tag/v1.3.0"",
+      ""published_at"": ""2026-12-02T10:00:00Z"",
+      ""body"": ""## What's Changed\n* In-app updates by @byocao in [#12](https://github.com/byocao/mini-stats/pull/12)\n\n**Full Changelog**: x"",
+      ""assets"": [
+        { ""name"": ""MiniStats-win-x64.zip"", ""size"": 61234, ""digest"": ""sha256:abc"",
+          ""url"": ""https://api.github.com/repos/byocao/mini-stats/releases/assets/1"" },
+        { ""name"": ""MiniStats-win-x64.zip.sha256"", ""size"": 89,
+          ""url"": ""https://api.github.com/repos/byocao/mini-stats/releases/assets/2"" } ] }";
+
+    static void UpdaterTests(Action<string, bool> check)
+    {
+        check("tag v1.2.3 parses", Updater.ParseTag("v1.2.3") == new Version(1, 2, 3));
+        check("tag 1.2 parses as 1.2.0", Updater.ParseTag("1.2") == new Version(1, 2, 0));
+        check("pre-release suffix is ignored", Updater.ParseTag("v2.0.0-beta.1") == new Version(2, 0, 0));
+        check("junk tag is rejected", Updater.ParseTag("latest") == null);
+
+        var info = Updater.Parse(SampleReleaseJson);
+        check("release JSON: version", info.Version == new Version(1, 3, 0));
+        check("release JSON: zip asset, size and digest", info.ZipUrl.EndsWith("/assets/1") && info.ZipSize == 61234 && info.Digest == "sha256:abc");
+        check("release JSON: checksum asset", info.ShaUrl != null && info.ShaUrl.EndsWith("/assets/2"));
+        check("release JSON: page and date", info.PageUrl.EndsWith("/v1.3.0") && info.Published.Year == 2026);
+        bool threw = false;
+        try { Updater.Parse(@"{ ""tag_name"": ""v1.3.0"", ""assets"": [] }"); } catch (InvalidDataException) { threw = true; }
+        check("release without the zip is refused", threw);
+
+        var up = new Updater(new Version(1, 2, 0));
+        up.GetText = delegate (string url, string accept) { return SampleReleaseJson; };
+        up.CheckNow();
+        check("newer release -> Available", up.State == UpdateState.Available && up.Latest.Version == new Version(1, 3, 0));
+        var same = new Updater(new Version(1, 3, 0)) { GetText = delegate (string u, string a) { return SampleReleaseJson; } };
+        same.CheckNow();
+        check("same version -> UpToDate", same.State == UpdateState.UpToDate);
+        var offline = new Updater(new Version(1, 2, 0)) { GetText = delegate (string u, string a) { throw new System.Net.WebException("down"); } };
+        offline.CheckNow();
+        check("offline -> friendly error", offline.State == UpdateState.Error && offline.Error.StartsWith("Couldn't reach GitHub"));
+
+        string notes = Updater.PlainNotes("## What's Changed\n* In-app updates by @x in [#12](https://y)\n\n**Full Changelog**: z", 8);
+        check("release notes are turned into plain text", notes == "What's Changed\n•  In-app updates by @x in #12");
+
+        // swap / rollback / cleanup on throw-away files
+        string dir = Path.Combine(Path.GetTempPath(), "ministats-selftest-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            string exe = Path.Combine(dir, "MiniStats.exe"), fresh = Path.Combine(dir, "new.exe");
+            File.WriteAllText(exe, "old"); File.WriteAllText(fresh, "new");
+            Updater.Swap(exe, fresh);
+            check("swap puts the new exe in place", File.ReadAllText(exe) == "new" && File.ReadAllText(exe + ".old") == "old");
+            Updater.Rollback(exe);
+            check("rollback restores the previous exe", File.ReadAllText(exe) == "old" && !File.Exists(exe + ".old"));
+            Updater.Swap(exe, fresh);
+            Updater.CleanupOld(exe);
+            check("leftover .old is cleaned up", !File.Exists(exe + ".old") && File.ReadAllText(exe) == "new");
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
+    }
+
+    static void UpdateUiTests(Action<string, bool> check)
+    {
+        var host = new FakeHost();
+        var w = Offscreen(host);
+        w.SelectTab(3); Pump();
+        check("up to date: no sidebar banner", w.UpdatePill.Visibility != Visibility.Visible);
+        check("up to date: badge and status", w.UpdBadgeText.Text == "Up to date" && w.UpdStatus.Text.Contains("latest version, v1.2.0"));
+        check("up to date: no install button", w.UpdInstallBtn.Visibility != Visibility.Visible);
+
+        host.Updater.Simulate(UpdateState.Available, FakeHost.SampleRelease(new Version(1, 3, 0)), 0); Pump();
+        check("available: sidebar banner above the FPS pill", w.UpdatePill.Visibility == Visibility.Visible && w.UpdatePillTitle.Text == "Update available");
+        check("available: install button names the version", w.UpdInstallBtn.Visibility == Visibility.Visible && w.UpdInstallText.Text == "Update to v1.3.0");
+        check("available: what's new is shown", w.UpdNotesBox.Visibility == Visibility.Visible && w.UpdNotes.Text.Contains("Vertical layout picker"));
+
+        w.OpacitySlider.Value = 60; Pump();
+        Click(w.UpdatePillBtn);
+        check("update button starts the update", host.UpdateStarts == 1);
+        check("unsaved changes are saved before updating", host.Commits == 1 && Math.Abs(host.Saved.Opacity - 0.6) < 0.001);
+
+        host.Updater.Simulate(UpdateState.Downloading, FakeHost.SampleRelease(new Version(1, 3, 0)), 42); Pump();
+        check("downloading: progress in banner and card", w.UpdatePillProgress.Value == 42 && w.UpdProgress.Visibility == Visibility.Visible && w.UpdatePillText.Text.Contains("42 %"));
+        check("downloading: buttons are disabled", !w.UpdatePillBtn.IsEnabled && !w.UpdInstallBtn.IsEnabled && !w.UpdCheckBtn.IsEnabled);
+
+        host.Updater.Simulate(UpdateState.Error, FakeHost.SampleRelease(new Version(1, 3, 0)), 0); Pump();
+        check("failed: banner offers to try again", w.UpdatePillTitle.Text == "Update failed" && w.UpdatePillBtnText.Text == "Try again" && w.UpdatePillBtn.IsEnabled);
+
+        w.AutoUpdateSwitch.IsChecked = false; Pump();
+        check("auto-check switch previews check_updates=false", host.LastPreview != null && !host.LastPreview.CheckUpdates);
+        Click(w.SaveBtn);
+        check("auto-check setting is saved", !host.Saved.CheckUpdates && host.Saved.Serialize().Contains("check_updates=false"));
     }
 
     static List<string> Enabled(SettingsWindow w)

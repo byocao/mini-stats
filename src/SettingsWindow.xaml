@@ -363,6 +363,23 @@
       </Setter>
     </Style>
 
+    <!-- thin progress bar -->
+    <Style TargetType="ProgressBar">
+      <Setter Property="Height" Value="6"/>
+      <Setter Property="Minimum" Value="0"/>
+      <Setter Property="Maximum" Value="100"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ProgressBar">
+            <Grid>
+              <Border x:Name="PART_Track" CornerRadius="3" Background="#2A2A3A"/>
+              <Border x:Name="PART_Indicator" CornerRadius="3" HorizontalAlignment="Left" Background="{StaticResource Accent}"/>
+            </Grid>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
     <!-- theme tile & corner spots -->
     <Style x:Key="Tile" TargetType="RadioButton">
       <Setter Property="Cursor" Value="Hand"/>
@@ -420,6 +437,29 @@
             <StackPanel Orientation="Horizontal">
               <Ellipse x:Name="FpsDot" Width="8" Height="8" Fill="#3DDC84" VerticalAlignment="Center"/>
               <TextBlock x:Name="FpsPillText" Text="FPS counter active" Margin="10,0,0,0" FontSize="12"/>
+            </StackPanel>
+          </Border>
+          <!-- update banner: docked above the FPS pill, only visible when a new release is available or installing -->
+          <Border x:Name="UpdatePill" DockPanel.Dock="Bottom" CornerRadius="12" Padding="14,12" Margin="0,0,0,10" BorderThickness="1" BorderBrush="#4A55B0" Visibility="Collapsed">
+            <Border.Background>
+              <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                <GradientStop Color="#232A5C" Offset="0"/>
+                <GradientStop Color="#33215A" Offset="1"/>
+              </LinearGradientBrush>
+            </Border.Background>
+            <StackPanel>
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="&#xE896;" FontFamily="{StaticResource Icons}" FontSize="13" Foreground="{StaticResource Accent}" VerticalAlignment="Center"/>
+                <TextBlock x:Name="UpdatePillTitle" Text="Update available" FontWeight="SemiBold" FontSize="12.5" Margin="8,0,0,0" VerticalAlignment="Center"/>
+              </StackPanel>
+              <TextBlock x:Name="UpdatePillText" Text="v1.3.0 is ready to install" Foreground="#C3C6EA" FontSize="11.5" Margin="0,4,0,10" TextWrapping="Wrap"/>
+              <ProgressBar x:Name="UpdatePillProgress" Margin="0,0,0,10" Visibility="Collapsed"/>
+              <Button x:Name="UpdatePillBtn" Style="{StaticResource Primary}" Padding="10,7" HorizontalAlignment="Stretch">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="&#xE896;" FontFamily="{StaticResource Icons}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                  <TextBlock x:Name="UpdatePillBtnText" Text="Update now"/>
+                </StackPanel>
+              </Button>
             </StackPanel>
           </Border>
           <StackPanel>
@@ -661,6 +701,55 @@
 
             <!-- ============ General -->
             <StackPanel x:Name="Page3" Visibility="Collapsed">
+              <Border Style="{StaticResource Card}">
+                <StackPanel>
+                  <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                      <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Updates" Style="{StaticResource CardTitle}" VerticalAlignment="Center"/>
+                        <Border x:Name="UpdBadge" CornerRadius="9" Padding="9,2" Margin="10,0,0,0" Background="#262634" VerticalAlignment="Center">
+                          <TextBlock x:Name="UpdBadgeText" Text="v1.2.0" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource Sub}"/>
+                        </Border>
+                      </StackPanel>
+                      <TextBlock x:Name="UpdStatus" Style="{StaticResource Hint}"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
+                      <Button x:Name="UpdCheckBtn" Style="{StaticResource Btn}" Margin="0,0,8,0">
+                        <StackPanel Orientation="Horizontal">
+                          <TextBlock Text="&#xE72C;" FontFamily="{StaticResource Icons}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                          <TextBlock Text="Check now"/>
+                        </StackPanel>
+                      </Button>
+                      <Button x:Name="UpdInstallBtn" Style="{StaticResource Primary}" Visibility="Collapsed">
+                        <StackPanel Orientation="Horizontal">
+                          <TextBlock Text="&#xE896;" FontFamily="{StaticResource Icons}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                          <TextBlock x:Name="UpdInstallText" Text="Update"/>
+                        </StackPanel>
+                      </Button>
+                    </StackPanel>
+                  </Grid>
+                  <ProgressBar x:Name="UpdProgress" Margin="0,14,0,0" Visibility="Collapsed"/>
+                  <Border x:Name="UpdNotesBox" Margin="0,14,0,0" Padding="14,12" CornerRadius="10" Background="#15151D" BorderBrush="{StaticResource Line}" BorderThickness="1" Visibility="Collapsed">
+                    <StackPanel>
+                      <DockPanel>
+                        <Button x:Name="UpdNotesBtn" DockPanel.Dock="Right" Style="{StaticResource Ghost}" Padding="6,2" Content="Full release notes" FontSize="12"/>
+                        <TextBlock x:Name="UpdNotesTitle" Text="What's new" FontWeight="SemiBold" FontSize="12.5" VerticalAlignment="Center"/>
+                      </DockPanel>
+                      <TextBlock x:Name="UpdNotes" Style="{StaticResource Hint}" Margin="0,6,0,0" LineHeight="18"/>
+                    </StackPanel>
+                  </Border>
+                  <Border Height="1" Background="{StaticResource Line}" Margin="0,16,0,14"/>
+                  <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                      <TextBlock Text="Check for updates automatically" FontWeight="SemiBold"/>
+                      <TextBlock Text="Looks for a new release on GitHub at start-up and twice a day. Nothing is installed without your click." Style="{StaticResource Hint}"/>
+                    </StackPanel>
+                    <CheckBox x:Name="AutoUpdateSwitch" Grid.Column="1" Style="{StaticResource Switch}" VerticalAlignment="Center" Margin="16,0,0,0"/>
+                  </Grid>
+                </StackPanel>
+              </Border>
               <Border Style="{StaticResource Card}">
                 <Grid>
                   <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
