@@ -119,6 +119,7 @@ class Config
     public float FontSize = 10f;
     public double Opacity = 0.88;
     public int CornerRadius = 8;
+    public string Layout = "horizontal";     // horizontal = one row | vertical = one metric per line
     public int Margin = 10;
     public string Anchor = "bottom-right";   // top-left | top-right | bottom-left | bottom-right | custom
     public int Monitor = -1;                 // -1 = primary, otherwise index into Screen.AllScreens
@@ -207,6 +208,7 @@ class Config
                     case "font_size": FontSize = Math.Max(6f, float.Parse(v, CultureInfo.InvariantCulture)); break;
                     case "opacity": Opacity = double.Parse(v, CultureInfo.InvariantCulture); break;
                     case "corner_radius": CornerRadius = Math.Max(0, int.Parse(v)); break;
+                    case "layout": Layout = v.ToLowerInvariant() == "vertical" ? "vertical" : "horizontal"; break;
                     case "margin": Margin = int.Parse(v); break;
                     case "anchor": if (Array.IndexOf(Anchors, v.ToLowerInvariant()) >= 0) { Anchor = v.ToLowerInvariant(); anchorSeen = true; } break;
                     case "monitor": Monitor = v.Length == 0 || v.ToLowerInvariant() == "primary" ? -1 : Math.Max(-1, int.Parse(v) - 1); break;
@@ -240,6 +242,8 @@ class Config
         sb.AppendLine("font_size=" + FontSize.ToString(CultureInfo.InvariantCulture));
         sb.AppendLine("opacity=" + Opacity.ToString(CultureInfo.InvariantCulture));
         sb.AppendLine("corner_radius=" + CornerRadius);
+        sb.AppendLine("# layout: horizontal (one row) or vertical (one metric per line)");
+        sb.AppendLine("layout=" + Layout);
         sb.AppendLine("background=" + Hex(Back));
         foreach (var kv in Colors) sb.AppendLine("color_" + kv.Key + "=" + Hex(kv.Value));
         sb.AppendLine();
@@ -314,12 +318,16 @@ class Snapshot
 class Painter : IDisposable
 {
     public const int PadX = 11, PadY = 5, LabelGap = 4, ItemGap = 12;
+    // vertical layout: one metric per row, captions in a column, values right-aligned in a second column
+    public const int VPadX = 12, VPadY = 8, VColumnGap = 14, VRowGap = 3;
     public Font LabelFont, ValueFont;
     float pxPerPt;
+    readonly bool vertical;
 
     public Painter(Config cfg, float pixelsPerPoint)
     {
         pxPerPt = pixelsPerPoint;
+        vertical = cfg.Layout == "vertical";
         ValueFont = new Font(cfg.FontName, cfg.FontSize * pxPerPt, FontStyle.Bold, GraphicsUnit.Pixel);
         LabelFont = new Font(cfg.FontName, cfg.FontSize * 0.78f * pxPerPt, FontStyle.Regular, GraphicsUnit.Pixel);
     }
@@ -328,8 +336,31 @@ class Painter : IDisposable
 
     static Size M(string s, Font f) { return TextRenderer.MeasureText(s, f, Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine); }
 
+    // column widths and row height for the vertical layout
+    void Columns(List<Part> parts, out int labelW, out int valueW, out int rowH)
+    {
+        labelW = 0; valueW = 0; rowH = 0;
+        foreach (var p in parts)
+        {
+            var l = M(p.Label, LabelFont);
+            var v = M(p.Template, ValueFont);
+            var va = M(p.Value, ValueFont);
+            labelW = Math.Max(labelW, l.Width);
+            valueW = Math.Max(valueW, Math.Max(v.Width, va.Width));
+            rowH = Math.Max(rowH, Math.Max(l.Height, v.Height));
+        }
+    }
+
     public Size Measure(List<Part> parts)
     {
+        if (vertical)
+        {
+            int labelW, valueW, rowH;
+            Columns(parts, out labelW, out valueW, out rowH);
+            int rows = Math.Max(1, parts.Count);
+            return new Size(2 * S(VPadX) + labelW + S(VColumnGap) + valueW,
+                            2 * S(VPadY) + rows * rowH + (rows - 1) * S(VRowGap));
+        }
         int w = S(PadX), h = 0;
         for (int i = 0; i < parts.Count; i++)
         {
@@ -346,8 +377,35 @@ class Painter : IDisposable
 
     public void Draw(Graphics g, Size size, List<Part> parts, Config cfg, bool highlightBorder)
     {
-        int x = S(PadX);
         Color labelColor = cfg.ColorOf("label");
+        const TextFormatFlags flags = TextFormatFlags.NoPadding | TextFormatFlags.SingleLine;
+        if (vertical)
+        {
+            int labelW, valueW, rowH;
+            Columns(parts, out labelW, out valueW, out rowH);
+            int y = S(VPadY);
+            int valueRight = size.Width - S(VPadX);
+            foreach (var p in parts)
+            {
+                var l = M(p.Label, LabelFont);
+                var va = M(p.Value, ValueFont);
+                TextRenderer.DrawText(g, p.Label, LabelFont, new Point(S(VPadX), y + (rowH - l.Height) / 2 + S(1)), labelColor, cfg.Back, flags);
+                TextRenderer.DrawText(g, p.Value, ValueFont, new Point(valueRight - va.Width, y + (rowH - va.Height) / 2), cfg.ColorOf(p.ColorKey), cfg.Back, flags);
+                y += rowH + S(VRowGap);
+            }
+        }
+        else
+        {
+            DrawRow(g, size, parts, cfg, labelColor, flags);
+        }
+        if (highlightBorder)
+            using (var pen = new Pen(cfg.ColorOf("fps"), Math.Max(1, S(2))))
+                g.DrawRectangle(pen, 0, 0, size.Width - 1, size.Height - 1);
+    }
+
+    void DrawRow(Graphics g, Size size, List<Part> parts, Config cfg, Color labelColor, TextFormatFlags flags)
+    {
+        int x = S(PadX);
         for (int i = 0; i < parts.Count; i++)
         {
             var p = parts[i];
@@ -355,14 +413,11 @@ class Painter : IDisposable
             var v = M(p.Template, ValueFont);
             var va = M(p.Value, ValueFont);
             // align label and value on a common baseline-ish centre line
-            TextRenderer.DrawText(g, p.Label, LabelFont, new Point(x, (size.Height - l.Height) / 2 + S(1)), labelColor, cfg.Back, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+            TextRenderer.DrawText(g, p.Label, LabelFont, new Point(x, (size.Height - l.Height) / 2 + S(1)), labelColor, cfg.Back, flags);
             x += l.Width + S(LabelGap);
-            TextRenderer.DrawText(g, p.Value, ValueFont, new Point(x, (size.Height - va.Height) / 2), cfg.ColorOf(p.ColorKey), cfg.Back, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+            TextRenderer.DrawText(g, p.Value, ValueFont, new Point(x, (size.Height - va.Height) / 2), cfg.ColorOf(p.ColorKey), cfg.Back, flags);
             x += Math.Max(v.Width, va.Width) + S(ItemGap);
         }
-        if (highlightBorder)
-            using (var pen = new Pen(cfg.ColorOf("fps"), Math.Max(1, S(2))))
-                g.DrawRectangle(pen, 0, 0, size.Width - 1, size.Height - 1);
     }
 
     public void Dispose() { LabelFont.Dispose(); ValueFont.Dispose(); }
