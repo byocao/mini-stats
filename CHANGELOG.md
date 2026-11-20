@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.3.1 - 2026-11-20
+
+### Fixed
+- Running `MiniStats.exe` again could fail to open Settings when the running copy was still starting (for example
+  right after an update while the new exe is scanned). The second launch now keeps trying for up to 15 seconds.
+
+### Changed
+- The bar appears about twice as fast at start-up: counters, NVML and the FPS trace session are opened in the
+  background.
+
 ## v1.3.0 - 2026-11-20
 
 ### Added
