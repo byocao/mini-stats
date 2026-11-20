@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.2.0 - 2026-11-20
+
+### Added
+- **Vertical layout** (`layout=vertical`): one metric per line, captions in a column and values right-aligned,
+  like a classic in-game OSD. Pick it under **Settings → Appearance → Layout**; the preview grows to fit.
+
+### Fixed
+- A bar at a custom (dragged) position could hang partly off the screen, e.g. a tall vertical bar near the bottom
+  edge. It is now kept fully on screen; the saved position is unchanged.
+
 ## v1.1.1 - 2026-11-06
 
 ### Fixed
