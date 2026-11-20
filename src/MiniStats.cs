@@ -486,7 +486,7 @@ class Overlay : Form, ISettingsHost
     SettingsWindow settings;
 
     PerformanceCounter cpuCounter;
-    Nvml nvml;
+    volatile Nvml nvml; // opened by the sampler thread
     FpsTracker fps;
 
     // Sampling runs on its own thread so a slow driver / counter / other process can never freeze the UI thread
@@ -530,15 +530,9 @@ class Overlay : Form, ISettingsHost
         AutoScaleMode = AutoScaleMode.None;
         Text = "MiniStats";
 
-        try { cpuCounter = new PerformanceCounter("Processor Information", "% Processor Utility", "_Total"); cpuCounter.NextValue(); }
-        catch
-        {
-            try { cpuCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total"); cpuCounter.NextValue(); }
-            catch { cpuCounter = null; }
-        }
-        nvml = Nvml.TryCreate();
+        // the metric sources (performance counter, NVML, ETW session) are opened by the sampler thread,
+        // so the bar appears immediately instead of after they have initialised
         fps = new FpsTracker();
-        fps.Start();
 
         BuildTray();
         ApplyConfig();
@@ -790,8 +784,21 @@ class Overlay : Form, ISettingsHost
         sampler.Start();
     }
 
+    void OpenSources()
+    {
+        try { cpuCounter = new PerformanceCounter("Processor Information", "% Processor Utility", "_Total"); cpuCounter.NextValue(); }
+        catch
+        {
+            try { cpuCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total"); cpuCounter.NextValue(); }
+            catch { cpuCounter = null; }
+        }
+        nvml = Nvml.TryCreate();
+        fps.Start();
+    }
+
     void SamplerLoop()
     {
+        try { OpenSources(); } catch { }
         while (!stopping)
         {
             try { last = TakeSample(); } catch { }
@@ -975,7 +982,7 @@ class FpsTracker
     // EVENT_TRACE_PROPERTIES (x64) field offsets
     const int PropsSize = 120, LoggerNameSpace = 1024;
 
-    public string Error;
+    public volatile string Error; // written by the sampler thread, read by the UI
     ulong session;
     ulong traceHandle;
     IntPtr propsBuf, logfileBuf, loggerNamePtr;
