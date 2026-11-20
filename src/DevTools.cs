@@ -124,6 +124,11 @@ partial class SettingsWindow
             f.RadiusSlider.Value = 0; Pump();
             check("radius 0 previews square corners", host.LastPreview.CornerRadius == 0);
             check("horizontal layout is selected by default", f.LayoutH.IsChecked == true);
+            var screen = new System.Drawing.Rectangle(0, 0, 3440, 1440);
+            check("a tall bar near the bottom edge is pulled back on screen",
+                Overlay.ClampToScreen(screen, new System.Drawing.Point(2807, 1414), new System.Drawing.Size(182, 166)) == new System.Drawing.Point(2807, 1274));
+            check("a bar that fits keeps its custom spot",
+                Overlay.ClampToScreen(screen, new System.Drawing.Point(2700, 1414), new System.Drawing.Size(600, 26)) == new System.Drawing.Point(2700, 1414));
             double rowHeight = f.PreviewImage.Height;
             f.LayoutV.IsChecked = true; Pump();
             check("vertical layout previews", host.LastPreview.Layout == "vertical");

@@ -749,10 +749,24 @@ class Overlay : Form, ISettingsHost
         Native.DeleteObject(rgn);
     }
 
+    // Keeps a custom-positioned bar fully on its screen, e.g. a tall vertical bar dragged near the bottom edge.
+    // The saved x/y are left alone, so switching back to a smaller bar returns it to the exact spot.
+    public static Point ClampToScreen(Rectangle screen, Point p, Size size)
+    {
+        int x = Math.Max(screen.Left, Math.Min(p.X, screen.Right - size.Width));
+        int y = Math.Max(screen.Top, Math.Min(p.Y, screen.Bottom - size.Height));
+        return new Point(x, y);
+    }
+
     void Reposition()
     {
         if (movable) return;
-        if (cfg.Anchor == "custom" && cfg.X != int.MinValue && cfg.Y != int.MinValue) { Location = new Point(cfg.X, cfg.Y); return; }
+        if (cfg.Anchor == "custom" && cfg.X != int.MinValue && cfg.Y != int.MinValue)
+        {
+            var p = new Point(cfg.X, cfg.Y);
+            Location = ClampToScreen(Screen.FromPoint(p).Bounds, p, Size);
+            return;
+        }
         var wa = cfg.TargetScreen().WorkingArea;
         int m = (int)Math.Round(cfg.Margin * (painterDpi > 0 ? painterDpi : 96) / 96.0);
         bool left = cfg.Anchor == "top-left" || cfg.Anchor == "bottom-left";
