@@ -34,6 +34,12 @@ static class Program
         if (args.Length > 0 && args[0] == "--shot-settings") return SettingsWindow.Shots(args.Length > 1 ? args[1] : ".", args.Length > 2 ? double.Parse(args[2], CultureInfo.InvariantCulture) : 0);
         if (args.Length > 0 && args[0] == "--selftest") return SettingsWindow.SelfTest(args.Length > 1 ? args[1] : Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "selftest.txt"));
         if (args.Length > 0 && args[0] == "--probe") { FpsTracker.Probe(args.Length > 1 ? int.Parse(args[1]) : 5); return 0; }
+        if (args.Length > 0 && args[0] == "--update-dry-run") return UpdateDryRun(args.Length > 1 ? args[1] : null);
+
+        // "--updated <old version>": we were just installed by the in-app updater
+        string updatedFrom = null;
+        int ui = Array.IndexOf(args, "--updated");
+        if (ui >= 0 && ui + 1 < args.Length) updatedFrom = args[ui + 1];
 
         // "--settings [tab]" opens the settings window (tab 0-3); launching a second copy does the same
         int settingsTab = -1;
@@ -61,9 +67,38 @@ static class Program
             Application.SetCompatibleTextRenderingDefault(false);
             var overlay = new Overlay();
             if (settingsTab >= 0) overlay.Shown += delegate { overlay.ShowSettings(settingsTab); };
+            overlay.Shown += delegate { overlay.AfterStart(updatedFrom); };
             Application.Run(overlay);
         }
         return 0;
+    }
+
+    // MiniStats.exe --update-dry-run [report.txt]: check GitHub, then download, verify and unpack the latest release
+    // into %TEMP% exactly like an update would - without replacing anything. Exit code 0 = the update path works.
+    static int UpdateDryRun(string reportPath)
+    {
+        var sb = new StringBuilder();
+        var up = new Updater(Version.Parse(Application.ProductVersion));
+        up.CheckNow();
+        sb.AppendLine("current : " + up.Current);
+        sb.AppendLine("state   : " + up.State + (up.Error != null ? " (" + up.Error + ")" : ""));
+        int rc = 1;
+        if (up.Latest != null)
+        {
+            sb.AppendLine("latest  : " + up.Latest.Version + "  " + up.Latest.PageUrl);
+            sb.AppendLine("asset   : " + up.Latest.ZipSize + " bytes, sha256 file: " + (up.Latest.ShaUrl != null) + ", digest: " + (up.Latest.Digest ?? "-"));
+            try
+            {
+                var exe = up.Prepare(up.Latest);
+                var fvi = FileVersionInfo.GetVersionInfo(exe);
+                sb.AppendLine("prepared: " + exe + "  (" + fvi.ProductName + " " + fvi.ProductVersion + ", " + new FileInfo(exe).Length + " bytes)");
+                sb.AppendLine("RESULT  : OK - download, checksum and package verified");
+                rc = 0;
+            }
+            catch (Exception ex) { sb.AppendLine("RESULT  : FAILED - " + ex.Message); }
+        }
+        File.WriteAllText(reportPath ?? Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "update-dry-run.txt"), sb.ToString());
+        return rc;
     }
 
     // Registered window message posted by a second launch: wParam = settings tab + 1.
@@ -120,6 +155,7 @@ class Config
     public double Opacity = 0.88;
     public int CornerRadius = 8;
     public string Layout = "horizontal";     // horizontal = one row | vertical = one metric per line
+    public bool CheckUpdates = true;         // look for new GitHub releases in the background
     public int Margin = 10;
     public string Anchor = "bottom-right";   // top-left | top-right | bottom-left | bottom-right | custom
     public int Monitor = -1;                 // -1 = primary, otherwise index into Screen.AllScreens
@@ -209,6 +245,7 @@ class Config
                     case "opacity": Opacity = double.Parse(v, CultureInfo.InvariantCulture); break;
                     case "corner_radius": CornerRadius = Math.Max(0, int.Parse(v)); break;
                     case "layout": Layout = v.ToLowerInvariant() == "vertical" ? "vertical" : "horizontal"; break;
+                    case "check_updates": CheckUpdates = v.ToLowerInvariant() != "false" && v != "0"; break;
                     case "margin": Margin = int.Parse(v); break;
                     case "anchor": if (Array.IndexOf(Anchors, v.ToLowerInvariant()) >= 0) { Anchor = v.ToLowerInvariant(); anchorSeen = true; } break;
                     case "monitor": Monitor = v.Length == 0 || v.ToLowerInvariant() == "primary" ? -1 : Math.Max(-1, int.Parse(v) - 1); break;
@@ -246,6 +283,9 @@ class Config
         sb.AppendLine("layout=" + Layout);
         sb.AppendLine("background=" + Hex(Back));
         foreach (var kv in Colors) sb.AppendLine("color_" + kv.Key + "=" + Hex(kv.Value));
+        sb.AppendLine();
+        sb.AppendLine("# updates: check GitHub for new releases in the background (installing always needs a click)");
+        sb.AppendLine("check_updates=" + (CheckUpdates ? "true" : "false"));
         sb.AppendLine();
         sb.AppendLine("# position");
         sb.AppendLine("#   anchor : top-left | top-right | bottom-left | bottom-right | custom (uses x/y)");
@@ -461,6 +501,13 @@ class Overlay : Form, ISettingsHost
     public event EventHandler Sampled;
     public event EventHandler MoveModeChanged;
 
+    // ---- updates
+    public Updater Updater { get; private set; }
+    System.Windows.Forms.Timer updateTimer;
+    ToolStripMenuItem miUpdate;
+    Version notifiedVersion;
+    static readonly TimeSpan UpdateInterval = TimeSpan.FromHours(12);
+
     public Overlay()
     {
         string dir = System.IO.Path.GetDirectoryName(Application.ExecutablePath);
@@ -488,6 +535,68 @@ class Overlay : Form, ISettingsHost
         BuildTray();
         ApplyConfig();
         Relayout(true); // placeholder values until the first sample arrives
+
+        Updater = new Updater(Version.Parse(Application.ProductVersion));
+        Updater.Changed += delegate
+        {
+            if (IsDisposed || !IsHandleCreated) return;
+            if (InvokeRequired) BeginInvoke((Action)OnUpdaterChanged); else OnUpdaterChanged();
+        };
+        // first check shortly after start (not during boot-up), then twice a day; the check itself runs in the background
+        updateTimer = new System.Windows.Forms.Timer { Interval = 20000 };
+        updateTimer.Tick += delegate
+        {
+            updateTimer.Interval = (int)UpdateInterval.TotalMilliseconds;
+            if (cfg.CheckUpdates && !Updater.IsBusy && Updater.State != UpdateState.Available) Updater.CheckAsync();
+        };
+        updateTimer.Start();
+    }
+
+    // Called once the overlay is on screen.
+    public void AfterStart(string updatedFrom)
+    {
+        string exe = Application.ExecutablePath;
+        ThreadPool.QueueUserWorkItem(delegate { try { Updater.CleanupOld(exe); } catch { } });
+        if (updatedFrom != null)
+            tray.ShowBalloonTip(6000, "MiniStats updated", "Now running version " + Updater.Current + " (was " + updatedFrom + ").", ToolTipIcon.Info);
+    }
+
+    void OnUpdaterChanged()
+    {
+        var info = Updater.Latest;
+        bool available = Updater.State == UpdateState.Available && info != null;
+        miUpdate.Visible = available;
+        if (info != null) miUpdate.Text = "Install update " + info.Version + "...";
+        // tell the user once per new version; clicking the balloon opens Settings > General
+        if (available && (notifiedVersion == null || info.Version > notifiedVersion))
+        {
+            notifiedVersion = info.Version;
+            tray.ShowBalloonTip(8000, "MiniStats " + info.Version + " is available",
+                "Click here or open Settings > General to update. You have " + Updater.Current + ".", ToolTipIcon.Info);
+        }
+    }
+
+    // Download, verify and install the latest release, then restart into it.
+    public void StartUpdate()
+    {
+        Updater.InstallAsync(Application.ExecutablePath, RelaunchAfterUpdate);
+    }
+
+    void RelaunchAfterUpdate(string exePath)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(exePath, "--replace --updated " + Updater.Current);
+            psi.UseShellExecute = false; // same rights as us (elevated stays elevated, no UAC prompt)
+            psi.WorkingDirectory = System.IO.Path.GetDirectoryName(exePath);
+            Process.Start(psi);
+            Close();
+        }
+        catch (Exception ex)
+        {
+            try { Updater.Rollback(exePath); } catch { }
+            Updater.Fail("The new version could not be started, so the previous one was kept: " + ex.Message);
+        }
     }
 
     // ---- window styles: tool window, never activates, layered, click-through, topmost
@@ -562,6 +671,8 @@ class Overlay : Form, ISettingsHost
         menu.Items.Add(miSettings);
         miMove = new ToolStripMenuItem("Unlock to move", null, delegate { SetMovable(!movable, true); });
         menu.Items.Add(miMove);
+        miUpdate = new ToolStripMenuItem("Install update...", null, delegate { ShowSettings(3); StartUpdate(); }) { Visible = false };
+        menu.Items.Add(miUpdate);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Exit", null, delegate { Close(); });
 
@@ -571,6 +682,7 @@ class Overlay : Form, ISettingsHost
         tray.ContextMenuStrip = menu;
         tray.Visible = true;
         tray.DoubleClick += delegate { ShowSettings(); };
+        tray.BalloonTipClicked += delegate { if (Updater != null && Updater.State == UpdateState.Available) ShowSettings(3); };
     }
 
     public void ShowSettings() { ShowSettings(-1); }
@@ -782,6 +894,7 @@ class Overlay : Form, ISettingsHost
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         if (settings != null) settings.Close();
+        if (updateTimer != null) updateTimer.Stop();
         stopping = true;
         stopSampler.Set();
         bool samplerDone = sampler == null || sampler.Join(2000);
