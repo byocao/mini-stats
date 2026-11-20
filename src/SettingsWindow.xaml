@@ -451,7 +451,7 @@
           <TextBlock x:Name="PageSub" Text="" Foreground="{StaticResource Sub}" Margin="0,4,0,0"/>
         </StackPanel>
 
-        <Border Grid.Row="2" Margin="36,0,36,18" CornerRadius="14" Height="96" BorderBrush="#2E2A4A" BorderThickness="1">
+        <Border x:Name="PreviewCard" Grid.Row="2" Margin="36,0,36,18" CornerRadius="14" Height="96" BorderBrush="#2E2A4A" BorderThickness="1">
           <Border.Background>
             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
               <GradientStop Color="#101329" Offset="0"/>
@@ -494,6 +494,53 @@
 
             <!-- ============ Appearance -->
             <StackPanel x:Name="Page1" Visibility="Collapsed">
+              <Border Style="{StaticResource Card}" Padding="20,16,8,4">
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                  <StackPanel VerticalAlignment="Center" Margin="0,0,16,12">
+                    <TextBlock Text="Layout" Style="{StaticResource CardTitle}"/>
+                    <TextBlock Text="One compact row, or one metric per line like a classic in-game OSD." Style="{StaticResource Hint}"/>
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <RadioButton x:Name="LayoutH" Style="{StaticResource Tile}" GroupName="layout" ToolTip="Horizontal">
+                      <StackPanel Width="150">
+                        <Border Height="74" CornerRadius="9" Background="#18181C">
+                          <Border CornerRadius="5" Background="#26262E" Padding="7,4" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <StackPanel Orientation="Horizontal">
+                              <TextBlock Text="FPS" Foreground="#9696A2" FontSize="9" VerticalAlignment="Center"/>
+                              <TextBlock Text="144" Foreground="#FFDE66" FontSize="11" FontWeight="Bold" Margin="3,0,8,0"/>
+                              <TextBlock Text="CPU" Foreground="#9696A2" FontSize="9" VerticalAlignment="Center"/>
+                              <TextBlock Text="23%" Foreground="#7CC4FF" FontSize="11" FontWeight="Bold" Margin="3,0,8,0"/>
+                              <TextBlock Text="RAM" Foreground="#9696A2" FontSize="9" VerticalAlignment="Center"/>
+                              <TextBlock Text="61%" Foreground="#8BE28B" FontSize="11" FontWeight="Bold" Margin="3,0,0,0"/>
+                            </StackPanel>
+                          </Border>
+                        </Border>
+                        <TextBlock Text="Horizontal" Margin="6,8,6,3" FontWeight="SemiBold" FontSize="12.5"/>
+                      </StackPanel>
+                    </RadioButton>
+                    <RadioButton x:Name="LayoutV" Style="{StaticResource Tile}" GroupName="layout" ToolTip="Vertical">
+                      <StackPanel Width="150">
+                        <Border Height="74" CornerRadius="9" Background="#18181C">
+                          <Border CornerRadius="5" Background="#26262E" Padding="9,4" HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Grid>
+                              <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                              <Grid.RowDefinitions><RowDefinition/><RowDefinition/><RowDefinition/></Grid.RowDefinitions>
+                              <TextBlock Text="FPS" Foreground="#9696A2" FontSize="9" VerticalAlignment="Center"/>
+                              <TextBlock Grid.Column="1" Text="144" Foreground="#FFDE66" FontSize="11" FontWeight="Bold" HorizontalAlignment="Right" Margin="14,0,0,0"/>
+                              <TextBlock Grid.Row="1" Text="CPU" Foreground="#9696A2" FontSize="9" VerticalAlignment="Center"/>
+                              <TextBlock Grid.Row="1" Grid.Column="1" Text="23%" Foreground="#7CC4FF" FontSize="11" FontWeight="Bold" HorizontalAlignment="Right"/>
+                              <TextBlock Grid.Row="2" Text="RAM" Foreground="#9696A2" FontSize="9" VerticalAlignment="Center"/>
+                              <TextBlock Grid.Row="2" Grid.Column="1" Text="61%" Foreground="#8BE28B" FontSize="11" FontWeight="Bold" HorizontalAlignment="Right"/>
+                            </Grid>
+                          </Border>
+                        </Border>
+                        <TextBlock Text="Vertical" Margin="6,8,6,3" FontWeight="SemiBold" FontSize="12.5"/>
+                      </StackPanel>
+                    </RadioButton>
+                  </StackPanel>
+                </Grid>
+              </Border>
               <Border Style="{StaticResource Card}" Padding="20,16,8,4">
                 <StackPanel>
                   <TextBlock Text="Theme" Style="{StaticResource CardTitle}"/>

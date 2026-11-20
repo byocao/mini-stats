@@ -123,6 +123,14 @@ partial class SettingsWindow
             check("opacity slider previews 50 %", Math.Abs(host.LastPreview.Opacity - 0.5) < 0.001 && f.OpacityText.Text == "50 %");
             f.RadiusSlider.Value = 0; Pump();
             check("radius 0 previews square corners", host.LastPreview.CornerRadius == 0);
+            check("horizontal layout is selected by default", f.LayoutH.IsChecked == true);
+            double rowHeight = f.PreviewImage.Height;
+            f.LayoutV.IsChecked = true; Pump();
+            check("vertical layout previews", host.LastPreview.Layout == "vertical");
+            check("vertical preview is taller than the row", f.PreviewImage.Height > rowHeight * 2 && f.PreviewCard.Height >= f.PreviewImage.Height);
+            f.LayoutH.IsChecked = true; Pump();
+            check("switching back to horizontal previews", host.LastPreview.Layout == "horizontal");
+            f.LayoutV.IsChecked = true; Pump();
             f.FontSizeSlider.Value = 12.5; Pump();
             check("text size previews", Math.Abs(host.LastPreview.FontSize - 12.5f) < 0.01 && f.FontSizeText.Text == "12.5 pt");
             int consolas = f.FontCombo.Items.IndexOf("Consolas");
@@ -169,6 +177,7 @@ partial class SettingsWindow
 
             var g = Offscreen(host);
             check("reopening shows the saved anchor", g.CornerTL.IsChecked == true);
+            check("reopening shows the saved layout", g.LayoutV.IsChecked == true && host.Saved.Layout == "vertical");
             check("reopening shows the saved order", string.Join(",", host.Saved.Items) == string.Join(",", Enabled(g)));
             g.StartupSwitch.IsChecked = false; Pump();
             check("startup switch calls the host immediately", host.StartupCalls == 1 && !host.Startup);
@@ -176,7 +185,7 @@ partial class SettingsWindow
             check("reset previews the defaults", host.LastPreview.DetectTheme() == "Midnight" && host.LastPreview.Anchor == "bottom-right");
             Click(g.SaveBtn);
             check("Save commits and closes", host.Commits == 2 && !g.Win.IsVisible);
-            check("defaults were saved", string.Join(",", host.Saved.Items) == "fps,cpu,ram,gpu" && Math.Abs(host.Saved.Opacity - 0.88) < 0.001);
+            check("defaults were saved", string.Join(",", host.Saved.Items) == "fps,cpu,ram,gpu" && Math.Abs(host.Saved.Opacity - 0.88) < 0.001 && host.Saved.Layout == "horizontal");
 
             var limited = new FakeHost { Elevated = false };
             var h = Offscreen(limited);

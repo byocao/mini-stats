@@ -88,7 +88,8 @@ partial class SettingsWindow
     ComboBox FontCombo, MonitorCombo;
     Popup ColorPopup;
     TextBox HexBox;
-    RadioButton CornerTL, CornerTR, CornerBL, CornerBR;
+    RadioButton CornerTL, CornerTR, CornerBL, CornerBR, LayoutH, LayoutV;
+    Border PreviewCard;
     Border CustomBadge, ScreenMock, FpsPill, FpsBadge;
     Ellipse FpsDot;
     CheckBox StartupSwitch;
@@ -125,6 +126,7 @@ partial class SettingsWindow
         Palette = E<WrapPanel>("Palette"); HexBox = E<TextBox>("HexBox"); SystemPickerBtn = E<Button>("SystemPickerBtn");
         MonitorCombo = E<ComboBox>("MonitorCombo"); ScreenMock = E<Border>("ScreenMock"); CustomBadge = E<Border>("CustomBadge");
         CornerTL = E<RadioButton>("CornerTL"); CornerTR = E<RadioButton>("CornerTR"); CornerBL = E<RadioButton>("CornerBL"); CornerBR = E<RadioButton>("CornerBR");
+        LayoutH = E<RadioButton>("LayoutH"); LayoutV = E<RadioButton>("LayoutV"); PreviewCard = E<Border>("PreviewCard");
         DragBtn = E<Button>("DragBtn"); DragText = E<TextBlock>("DragText");
         MarginSlider = E<Slider>("MarginSlider"); MarginText = E<TextBlock>("MarginText");
         FpsBadge = E<Border>("FpsBadge"); FpsBadgeText = E<TextBlock>("FpsBadgeText"); FpsHint = E<TextBlock>("FpsHint"); ElevateBtn = E<Button>("ElevateBtn");
@@ -228,6 +230,8 @@ partial class SettingsWindow
         FontCombo.SelectionChanged += delegate { OnChanged(); };
         MonitorCombo.SelectionChanged += delegate { UpdateScreenMock(); OnChanged(); };
 
+        LayoutH.Checked += delegate { OnChanged(); };
+        LayoutV.Checked += delegate { OnChanged(); };
         foreach (var rb in new[] { CornerTL, CornerTR, CornerBL, CornerBR })
             rb.Checked += delegate { if (loading) return; CustomBadge.Visibility = Visibility.Collapsed; OnChanged(); };
         DragBtn.Click += delegate { host.SetMovable(!host.IsMovable, false); UpdateDragButton(); };
@@ -299,6 +303,7 @@ partial class SettingsWindow
         FontSizeSlider.Value = Clamp(work.FontSize, 7, 20);
         OpacitySlider.Value = Clamp(Math.Round(work.Opacity * 100), 20, 100);
         RadiusSlider.Value = Clamp(work.CornerRadius, 0, 20);
+        (work.Layout == "vertical" ? LayoutV : LayoutH).IsChecked = true;
         RefreshColors();
 
         MonitorCombo.SelectedIndex = work.Monitor >= 0 && work.Monitor + 1 < MonitorCombo.Items.Count ? work.Monitor + 1 : 0;
@@ -339,6 +344,7 @@ partial class SettingsWindow
         work.FontSize = (float)FontSizeSlider.Value;
         work.Opacity = Math.Round(OpacitySlider.Value) / 100.0;
         work.CornerRadius = (int)Math.Round(RadiusSlider.Value);
+        work.Layout = LayoutV.IsChecked == true ? "vertical" : "horizontal";
         work.Monitor = MonitorCombo.SelectedIndex - 1;
         string corner = CheckedCorner();
         work.Anchor = corner ?? "custom";
@@ -596,6 +602,7 @@ partial class SettingsWindow
             PreviewImage.Source = ToSource(bmp);
             PreviewImage.Width = bmp.Width / scale;
             PreviewImage.Height = bmp.Height / scale;
+            PreviewCard.Height = Math.Max(96, PreviewImage.Height + 48); // a vertical bar is taller than one row
         }
     }
 
